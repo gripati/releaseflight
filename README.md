@@ -31,14 +31,21 @@ but they are not required to run it.
 
 ## 🖼️ Demo
 
-<!-- TODO(launch): replace this placeholder with a 10–15s hero GIF/screenshot loop
-     under the H1 before launch — e.g. edit metadata → run a build → see it deploy.
-     Suggested caption: "Edit metadata, run a build, ship to both stores — from
-     one place you own." Drop the asset in docs/assets/ and embed it here. -->
+Real screenshots from a fresh [`./scripts/install.sh`](#-self-host-in-one-command) run:
 
-> **Screenshots & demo GIF coming soon.** Want to see it now? Clone and run it —
-> the [one-command install](#-self-host-in-one-command) gives you the full product
-> on `localhost:3000` in a few minutes.
+![Release Flight — your workspace](docs/assets/apps.png)
+
+Your store credentials never leave your secret manager — only metadata touches the
+database. That's the whole point of [running it yourself](#-why-open-source):
+
+![Release Flight — connect App Store Connect & Google Play](docs/assets/credentials.png)
+
+<!-- TODO(launch): add a 10–15s workflow GIF (edit metadata → run a build → deploy)
+     as the hero, captured against an instance with a real connected app. Regenerate
+     these stills any time with: node scripts/capture-screenshots.mjs -->
+
+> Want to see it live? The [one-command install](#-self-host-in-one-command) gives
+> you the full product on `localhost:3000` in a few minutes.
 
 ## 🔐 Why open source?
 

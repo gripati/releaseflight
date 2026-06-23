@@ -42,11 +42,15 @@ export class AppleAuth {
 
     // L2: Redis (shared across workers)
     if (this.redis) {
-      const remote = await this.redis.get(cacheKey);
-      if (remote) {
-        // Re-validate by quickly checking expiry — we assume Redis TTL is honest
-        this.memoryCache.set(cacheKey, { token: remote, expiresAt: now + 14 * 60 * 1000 });
-        return remote;
+      try {
+        const remote = await this.redis.get(cacheKey);
+        if (remote) {
+          // Re-validate by quickly checking expiry — we assume Redis TTL is honest
+          this.memoryCache.set(cacheKey, { token: remote, expiresAt: now + 14 * 60 * 1000 });
+          return remote;
+        }
+      } catch {
+        // Best-effort cache: a Redis miss/error must not block minting a token.
       }
     }
 
@@ -61,7 +65,11 @@ export class AppleAuth {
     const expiresAt = now + 14 * 60 * 1000; // 14 min — conservatively under 20-min Apple cap
     this.memoryCache.set(cacheKey, { token, expiresAt });
     if (this.redis) {
-      await this.redis.set(cacheKey, token, 14 * 60);
+      try {
+        await this.redis.set(cacheKey, token, 14 * 60);
+      } catch {
+        // Best-effort cache: token is already returned + memory-cached.
+      }
     }
     return token;
   }

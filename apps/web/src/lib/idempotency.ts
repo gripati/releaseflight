@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createHash } from "node:crypto";
-import { redis } from "@marquee/cache";
+import { cacheGet, cacheSet } from "@marquee/cache";
 import { getTenantContext } from "@marquee/db";
 
 const TTL_SECONDS = 24 * 60 * 60;
@@ -49,7 +49,7 @@ export function withIdempotency<TRest extends unknown[]>(
       .digest("hex");
     const cacheKey = `idem:${tenantId}:${key}:${fingerprint}`;
 
-    const cached = await redis.get(cacheKey);
+    const cached = await cacheGet(cacheKey);
     if (cached) {
       const data = JSON.parse(cached) as CachedResponse;
       return new NextResponse(JSON.stringify(data.body), {
@@ -70,7 +70,7 @@ export function withIdempotency<TRest extends unknown[]>(
         headers,
         storedAt: new Date().toISOString(),
       };
-      await redis.set(cacheKey, JSON.stringify(stored), "EX", TTL_SECONDS);
+      await cacheSet(cacheKey, JSON.stringify(stored), TTL_SECONDS);
     }
     return res;
   };

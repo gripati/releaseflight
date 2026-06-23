@@ -46,10 +46,14 @@ export class GoogleAuth {
     }
 
     if (this.redis) {
-      const remote = await this.redis.get(cacheKey);
-      if (remote) {
-        this.memoryCache.set(cacheKey, { token: remote, expiresAt: now + 50 * 60 * 1000 });
-        return remote;
+      try {
+        const remote = await this.redis.get(cacheKey);
+        if (remote) {
+          this.memoryCache.set(cacheKey, { token: remote, expiresAt: now + 50 * 60 * 1000 });
+          return remote;
+        }
+      } catch {
+        // Best-effort cache: a Redis miss/error must not block minting a token.
       }
     }
 
@@ -84,7 +88,11 @@ export class GoogleAuth {
 
     this.memoryCache.set(cacheKey, { token: data.access_token, expiresAt: now + ttlMs });
     if (this.redis) {
-      await this.redis.set(cacheKey, data.access_token, expiresIn);
+      try {
+        await this.redis.set(cacheKey, data.access_token, expiresIn);
+      } catch {
+        // Best-effort cache: token is already returned + memory-cached.
+      }
     }
     return data.access_token;
   }

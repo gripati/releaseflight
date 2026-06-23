@@ -37,8 +37,15 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # This Redis backs the BullMQ job queue (as well as cache/locks/rate-limit),
+    # so the policy is `noeviction`: BullMQ requires it — under memory pressure a
+    # queue key must NEVER be silently evicted (that drops jobs). With noeviction,
+    # writes are refused once `maxmemory` is hit (jobs fail loudly instead of
+    # vanishing). 1gb is a comfortable default for a single-instance self-host;
+    # raise it for heavy workloads, or run a second Redis (cache vs queue) at
+    # scale. appendonly = durable across restarts.
     command: >
-      redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+      redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy noeviction
     volumes:
       - redis-data:/data
     healthcheck:

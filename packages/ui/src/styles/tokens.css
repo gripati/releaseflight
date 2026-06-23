@@ -1,0 +1,292 @@
+/* ────────────────────────────────────────────────────────────────────
+   Release Flight Design Tokens — Modern SaaS aesthetic
+   ──────────────────────────────────────────────────────────────────────
+   Previously this file shipped an "editorial-technical" hybrid with warm
+   paper-tone surfaces, hairline 0.5 px borders, tight 2-6 px radii, and
+   monospace uppercase labels everywhere. It looked distinctive but felt
+   "newspaper-old" next to product-dashboard contemporaries (Linear,
+   Vercel, Stripe, Notion).
+
+   The refresh below trades the editorial signature for a clean, neutral
+   product-surface palette:
+
+     • Surfaces shift from warm `#faf8f2` paper to cool zinc-grays
+       (`#fafafa` paper, `#ffffff` elevated cards, `#f4f4f5` sunken wells).
+     • Default radius bumps up the curve: cards at 12 px, pills at 999 px,
+       inputs at 8 px — pillowy without being cartoonish.
+     • Shadows become real soft elevations (multi-layer y-offset blur)
+       instead of hairline pseudo-shadows.
+     • Strokes stay subtle but now ride solid 1 px borders, not 0.5 px
+       hairlines that disappear on retina displays.
+     • Signal accent stays the bold orange (#e84b1e light / #ff6b41 dark)
+       — it's distinctive and works well against the new neutrals.
+
+   Typography: ONE family — Inter (self-hosted variable). It drives display,
+   body, the Release Flight wordmark AND the mono slots (numeric/id data uses
+   Inter's tabular figures). The "mono uppercase label" pattern that made
+   everything feel like a technical drawing is discouraged in new components;
+   use sans for headers + labels.
+   ──────────────────────────────────────────────────────────────────── */
+
+:root,
+:root[data-theme="light"] {
+  /* Surfaces — cool neutral grays */
+  --surface-paper: #fafafa;          /* page background */
+  --surface-elevated: #ffffff;       /* cards, popovers, inputs */
+  --surface-sunken: #f4f4f5;         /* recessed wells, table headers */
+  --surface-tinted: #f9fafb;         /* hover backgrounds */
+  --surface-input: #ffffff;
+  --surface-input-hover: #fafafa;
+  --surface-input-focus: #ffffff;
+  --surface-input-disabled: #f4f4f5;
+
+  /* Ink — text & strokes (WCAG AA on the new white surfaces) */
+  --ink-primary: #09090b;     /* zinc-950 — 19.7:1 on white */
+  --ink-secondary: #3f3f46;   /* zinc-700 — 9.8:1 on white */
+  --ink-tertiary: #71717a;    /* zinc-500 — 4.8:1 on white */
+  --ink-quaternary: #a1a1aa;  /* zinc-400 — decorative, ≥3:1 */
+
+  /* Strokes — solid 1 px borders */
+  --stroke-soft: rgba(9, 9, 11, 0.06);
+  --stroke-default: rgba(9, 9, 11, 0.10);
+  --stroke-input: rgba(9, 9, 11, 0.14);
+  --stroke-strong: rgba(9, 9, 11, 0.22);
+  --stroke-emphasis: rgba(9, 9, 11, 0.50);
+
+  /* Signal — single bold accent */
+  --signal: #e84b1e;
+  --signal-hover: #c73e18;
+  --signal-pressed: #a93315;
+  --signal-tint: rgba(232, 75, 30, 0.10);
+  --signal-on: #ffffff;
+
+  /* Semantic — kept the same hues, softened the tints */
+  --status-success: #15803d;
+  --status-success-tint: rgba(21, 128, 61, 0.10);
+  --status-warning: #c2410c;
+  --status-warning-tint: rgba(194, 65, 12, 0.10);
+  --status-danger: #b91c1c;
+  --status-danger-tint: rgba(185, 28, 28, 0.10);
+  --status-info: #1d4ed8;
+  --status-info-tint: rgba(29, 78, 216, 0.10);
+
+  /* Platform accents */
+  --platform-apple: #18181b;
+  --platform-google: #16a34a;
+  --platform-firebase: #ea580c;
+
+  /* State indicators (semantic aliases) */
+  --state-dirty: #c2410c;
+  --state-syncing: #1d4ed8;
+  --state-synced: #15803d;
+  --state-error: #b91c1c;
+
+  /* Shadows — soft real elevations
+     We keep the multi-layer approach (one subtle, one prominent) so
+     shadows look natural under both small chips and large modals. */
+  --shadow-hairline:
+    0 0 0 1px var(--stroke-default);
+  --shadow-soft:
+    0 1px 2px rgba(9, 9, 11, 0.04),
+    0 0 0 1px var(--stroke-soft);
+  --shadow-elevated:
+    0 1px 3px rgba(9, 9, 11, 0.05),
+    0 4px 12px rgba(9, 9, 11, 0.06),
+    0 0 0 1px var(--stroke-default);
+  --shadow-popover:
+    0 8px 24px rgba(9, 9, 11, 0.10),
+    0 2px 6px rgba(9, 9, 11, 0.04),
+    0 0 0 1px var(--stroke-default);
+  --shadow-modal:
+    0 24px 48px rgba(9, 9, 11, 0.18),
+    0 8px 16px rgba(9, 9, 11, 0.06);
+  --shadow-inset:
+    inset 0 0 0 1px var(--stroke-default);
+
+  /* Radius — pillowy modern */
+  --radius-none: 0;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+  --radius-pill: 9999px;
+
+  /* Type — fonts wired in apps/web/app/layout.tsx via next/font.
+     ONE family — Inter (self-hosted variable, wght 100–900). Display +
+     wordmark + body + mono all resolve to Inter; numeric/id slots use Inter's
+     tabular figures (see .font-mono in globals.css). */
+  --font-wordmark: var(--font-inter), "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-inter), "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-body: var(--font-inter), "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-inter), "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+
+  /* Motion */
+  --motion-instant: 80ms;
+  --motion-fast: 160ms;
+  --motion-base: 240ms;
+  --motion-slow: 380ms;
+  --motion-deliberate: 600ms;
+  --ease-out-elegant: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quick: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-editorial: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+:root[data-theme="dark"] {
+  /* Cool dark surfaces — zinc-900 family */
+  --surface-paper: #09090b;          /* zinc-950 — page background */
+  --surface-elevated: #18181b;       /* zinc-900 — cards */
+  --surface-sunken: #050507;         /* deeper than paper, recessed wells */
+  --surface-tinted: #27272a;         /* zinc-800 — hover */
+  --surface-input: #18181b;
+  --surface-input-hover: #1f1f23;
+  --surface-input-focus: #27272a;
+  --surface-input-disabled: #0f0f11;
+
+  --ink-primary: #fafafa;     /* zinc-50 */
+  --ink-secondary: #d4d4d8;   /* zinc-300 — 11.2:1 on zinc-900 */
+  --ink-tertiary: #a1a1aa;    /* zinc-400 — 5.9:1 */
+  --ink-quaternary: #71717a;  /* zinc-500 — decorative */
+
+  --stroke-soft: rgba(250, 250, 250, 0.06);
+  --stroke-default: rgba(250, 250, 250, 0.10);
+  --stroke-input: rgba(250, 250, 250, 0.14);
+  --stroke-strong: rgba(250, 250, 250, 0.22);
+  --stroke-emphasis: rgba(250, 250, 250, 0.50);
+
+  --signal: #ff6b41;
+  --signal-hover: #ff8460;
+  --signal-pressed: #e84b1e;
+  --signal-tint: rgba(255, 107, 65, 0.16);
+  --signal-on: #09090b;
+
+  --status-success: #4ade80;
+  --status-success-tint: rgba(74, 222, 128, 0.14);
+  --status-warning: #fb923c;
+  --status-warning-tint: rgba(251, 146, 60, 0.14);
+  --status-danger: #f87171;
+  --status-danger-tint: rgba(248, 113, 113, 0.14);
+  --status-info: #60a5fa;
+  --status-info-tint: rgba(96, 165, 250, 0.14);
+
+  --platform-apple: #fafafa;
+  --platform-google: #4ade80;
+  --platform-firebase: #fb923c;
+
+  --state-dirty: #fb923c;
+  --state-syncing: #60a5fa;
+  --state-synced: #4ade80;
+  --state-error: #f87171;
+}
+
+@media (prefers-color-scheme: dark) {
+  /* Mirror the COMPLETE [data-theme="dark"] palette so an app that follows the OS
+     preference (no explicit data-theme) is fully themed — notably --surface-input
+     + variants, previously missing, which left inputs white with light text. */
+  :root:not([data-theme]) {
+    --surface-paper: #09090b;
+    --surface-elevated: #18181b;
+    --surface-sunken: #050507;
+    --surface-tinted: #27272a;
+    --surface-input: #18181b;
+    --surface-input-hover: #1f1f23;
+    --surface-input-focus: #27272a;
+    --surface-input-disabled: #0f0f11;
+
+    --ink-primary: #fafafa;
+    --ink-secondary: #d4d4d8;
+    --ink-tertiary: #a1a1aa;
+    --ink-quaternary: #71717a;
+
+    --stroke-soft: rgba(250, 250, 250, 0.06);
+    --stroke-default: rgba(250, 250, 250, 0.10);
+    --stroke-input: rgba(250, 250, 250, 0.14);
+    --stroke-strong: rgba(250, 250, 250, 0.22);
+    --stroke-emphasis: rgba(250, 250, 250, 0.50);
+
+    --signal: #ff6b41;
+    --signal-hover: #ff8460;
+    --signal-pressed: #e84b1e;
+    --signal-tint: rgba(255, 107, 65, 0.16);
+    --signal-on: #09090b;
+
+    --status-success: #4ade80;
+    --status-success-tint: rgba(74, 222, 128, 0.14);
+    --status-warning: #fb923c;
+    --status-warning-tint: rgba(251, 146, 60, 0.14);
+    --status-danger: #f87171;
+    --status-danger-tint: rgba(248, 113, 113, 0.14);
+    --status-info: #60a5fa;
+    --status-info-tint: rgba(96, 165, 250, 0.14);
+
+    --platform-apple: #fafafa;
+    --platform-google: #4ade80;
+    --platform-firebase: #fb923c;
+
+    --state-dirty: #fb923c;
+    --state-syncing: #60a5fa;
+    --state-synced: #4ade80;
+    --state-error: #f87171;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Skeleton shimmer — same idea, calmer with the new neutral palette. */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+    opacity: 0.7;
+  }
+  50% {
+    background-position: 200% 0;
+    opacity: 1;
+  }
+  100% {
+    background-position: 200% 0;
+    opacity: 0.7;
+  }
+}
+
+[role="status"][aria-busy="true"] {
+  background-image: linear-gradient(
+    100deg,
+    var(--surface-tinted) 0%,
+    var(--surface-sunken) 40%,
+    var(--surface-tinted) 80%
+  );
+  background-size: 200% 100%;
+}
+
+/* Page reveal — drop the blur, keep a quiet fade so first paint feels
+   intentional but doesn't ape "editorial" feel. */
+@keyframes editorial-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-loaded > * {
+  animation: editorial-reveal var(--motion-base) var(--ease-out-quick) both;
+}
+.page-loaded > *:nth-child(1) { animation-delay: 0ms; }
+.page-loaded > *:nth-child(2) { animation-delay: 40ms; }
+.page-loaded > *:nth-child(3) { animation-delay: 80ms; }
+.page-loaded > *:nth-child(4) { animation-delay: 120ms; }
+.page-loaded > *:nth-child(5) { animation-delay: 160ms; }
+.page-loaded > *:nth-child(n + 6) { animation-delay: 200ms; }

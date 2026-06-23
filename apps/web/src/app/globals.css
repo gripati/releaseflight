@@ -1,0 +1,231 @@
+@import "tailwindcss";
+@import "@marquee/ui/styles";
+
+/* Tailwind v4 — surface design tokens as CSS color utilities */
+@theme {
+  --color-surface-paper: var(--surface-paper);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-tinted: var(--surface-tinted);
+  --color-surface-input: var(--surface-input);
+  --color-ink-primary: var(--ink-primary);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-tertiary: var(--ink-tertiary);
+  --color-ink-quaternary: var(--ink-quaternary);
+  --color-signal: var(--signal);
+  --color-signal-hover: var(--signal-hover);
+  --color-signal-tint: var(--signal-tint);
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
+  --color-status-danger: var(--status-danger);
+  --color-status-info: var(--status-info);
+
+  --font-wordmark: var(--font-wordmark);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+/* Layer reset — minimal, editorial */
+html,
+body {
+  height: 100%;
+  background-color: var(--surface-paper);
+  color: var(--ink-primary);
+  font-family: var(--font-body);
+  /* Inter (variable) — the single typeface across the whole app. cv05 gives
+     the lowercase 'l' a tail so 1 / l / I stay distinct; cv11 the single-storey
+     'a'; light kern. */
+  font-feature-settings: "cv05" 1, "cv11" 1, "kern" 1;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  border-color: var(--stroke-default);
+}
+
+/* The "mono" slots now run on Inter too (one-family system). Keep their figures
+   tabular + slashed-zero so versions, ids, timestamps and numeric columns stay
+   aligned and unambiguous even in a proportional face. */
+.font-mono {
+  font-feature-settings: "tnum" 1, "zero" 1, "cv05" 1;
+}
+
+::selection {
+  background: var(--signal);
+  color: var(--signal-on);
+}
+
+/* Paper-texture overlay — very subtle noise */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' /></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/></svg>");
+  mix-blend-mode: multiply;
+}
+
+:root[data-theme="dark"] body::before {
+  mix-blend-mode: screen;
+  opacity: 0.06;
+}
+
+/* Make the bones of the page show through (z-index above noise).
+ * EXCLUDE `section[aria-live]`: sonner renders its toast container inside a
+ * <section aria-live="polite">. Giving that section `position:relative;z-index:2`
+ * traps the whole toast stack in a z-2 stacking context, so the fixed header
+ * (z-30) paints over every toast no matter how high the toast's own z-index is.
+ * Excluding it lets the toaster's fixed <ol> sit at the document root and win. */
+main,
+header,
+aside,
+nav,
+section:not([aria-live]),
+article {
+  position: relative;
+  z-index: 2;
+}
+
+/* Skip-to-content link (a11y) */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 0;
+  background: var(--surface-elevated);
+  padding: 12px 16px;
+  z-index: 9999;
+  border: 1px solid var(--stroke-default);
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* Focus styling fallback */
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * ASO semantic tones — used across portfolio, daily check, notifications.
+ * Hooked into `--status-*` design tokens, so dark mode is centrally
+ * controlled by `:root[data-theme="dark"]` (no per-component dark:
+ * variants needed). Keep this layer minimal — only true semantic
+ * helpers, not one-off colours.
+ * ──────────────────────────────────────────────────────────────────── */
+
+.tone-positive {
+  color: var(--status-success);
+}
+.tone-negative {
+  color: var(--status-danger);
+}
+.tone-warning {
+  color: var(--status-warning);
+}
+.tone-info {
+  color: var(--status-info, var(--signal));
+}
+
+.chip-positive {
+  color: var(--status-success);
+  background: var(--status-success-tint);
+}
+.chip-negative {
+  color: var(--status-danger);
+  background: var(--status-danger-tint);
+}
+.chip-warning {
+  color: var(--status-warning);
+  background: var(--status-warning-tint);
+}
+.chip-info {
+  color: var(--signal);
+  background: var(--signal-tint);
+}
+.chip-neutral {
+  color: var(--ink-secondary);
+  background: var(--surface-tinted);
+}
+
+/* Filled severity pill used by verdict badges + danger headlines.
+   Contrast-preserved across both themes. */
+.pill-positive {
+  background: var(--status-success);
+  color: var(--surface-paper);
+}
+.pill-negative {
+  background: var(--status-danger);
+  color: #ffffff;
+}
+.pill-warning {
+  background: var(--status-warning);
+  color: #ffffff;
+}
+.pill-info {
+  background: var(--signal);
+  color: var(--signal-on);
+}
+.pill-neutral {
+  background: var(--surface-tinted);
+  color: var(--ink-secondary);
+}
+
+/* ------------------------------------------------------------------ *
+ * .scroll-fine — refined scrollbar for long scrollable surfaces
+ *
+ * Default browser scrollbars are ~16 px and always visible: heavy,
+ * inconsistent across OSes, and visually loud on a 240 px locale rail
+ * with 39 entries. This utility ships a 6 px overlay-style track that
+ * stays invisible until the surface is hovered or actively scrolled,
+ * then fades in with a soft, theme-aware thumb. Matches the muted
+ * grey of design-system stroke tokens; darkens on thumb hover for an
+ * affordance that the operator can grab it.
+ *
+ * Applies to:
+ *   • LocaleRail (Metadata / Keywords / Screenshots / Previews)
+ *   • Any future inner-overflow surface — drop the class on the
+ *     scrolling container and you're done.
+ *
+ * Firefox uses its own properties (scrollbar-width / scrollbar-color).
+ * WebKit (Chrome, Safari, Edge) uses the ::-webkit-scrollbar pseudo
+ * tree. We cover both, with identical visual intent on each.
+ * ------------------------------------------------------------------ */
+.scroll-fine {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 180ms ease;
+}
+.scroll-fine:hover,
+.scroll-fine:focus-within {
+  scrollbar-color: color-mix(in oklab, var(--ink-tertiary) 55%, transparent)
+    transparent;
+}
+.scroll-fine::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-fine::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-fine::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  transition: background-color 180ms ease;
+}
+.scroll-fine:hover::-webkit-scrollbar-thumb,
+.scroll-fine:focus-within::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--ink-tertiary) 40%, transparent);
+}
+.scroll-fine::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--ink-tertiary) 80%, transparent);
+}
+.scroll-fine::-webkit-scrollbar-corner {
+  background: transparent;
+}

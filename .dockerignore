@@ -1,0 +1,35 @@
+node_modules
+**/node_modules
+# The Tauri wizard (apps/wizard) is never part of the web/worker images; excluding
+# it keeps its multi-GB Rust target/ out of the `COPY . .` build context. It is a
+# pnpm workspace member, but like packages/sealed|packaging it is simply absent
+# from the deps-stage COPY list, which --frozen-lockfile tolerates.
+apps/wizard
+**/.next
+**/dist
+**/coverage
+**/.turbo
+.git
+.gitignore
+.github
+.husky
+.env
+.env.*
+!.env.example
+*.log
+*.local
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+README.md
+CHANGELOG.md
+LICENSE
+docs/runbook
+tests/load
+tests/chaos
+e2e
+data/
+playwright-report/
+test-results/
+*.tsbuildinfo

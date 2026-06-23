@@ -1,0 +1,33 @@
+{
+  "name": "@marquee/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Release Flight build runner — macOS agent that clones, detects, builds (IPA/AAB/APK) and deploys mobile apps. Consumes the build.run queue.",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@marquee/core": "workspace:*",
+    "@marquee/db": "workspace:*",
+    "@marquee/jobs": "workspace:*",
+    "@marquee/secrets": "workspace:*",
+    "@marquee/storage": "workspace:*",
+    "bullmq": "^5.20.0",
+    "ioredis": "^5.4.1",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2"
+  }
+}

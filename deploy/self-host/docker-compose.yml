@@ -1,0 +1,200 @@
+# Release Flight — self-host production stack.
+#
+# This is the compose file the Tauri setup wizard writes into the install dir
+# (~/Library/Application Support/Release Flight) and then runs `docker compose up -d`
+# against. That dir already contains the wizard-generated `.env` (0600) and the
+# data/{secrets,storage,license} dirs. Compose auto-loads ./.env for ${VAR}
+# interpolation, and each app service also reads it via env_file.
+#
+# Images are referenced by tag (no `build:`). On a buyer's machine they are
+# installed via `docker load` from the bundled per-arch tarballs; on a dev
+# machine they are produced by `apps/web/Dockerfile` (targets `runtime` + `build`)
+# and `apps/worker/Dockerfile` (target `runtime`):
+#   docker build -f apps/web/Dockerfile    --target runtime -t marquee-web:local     .
+#   docker build -f apps/web/Dockerfile    --target build   -t marquee-migrate:local .
+#   docker build -f apps/worker/Dockerfile --target runtime -t marquee-worker:local  .
+#
+# Distinct project name so volumes never collide with the dev `marquee`/
+# `gamepublisher` stack. Infra (postgres/redis/minio) is NOT published to the
+# host — services reach it on the compose network — so it cannot conflict with
+# any host port. Only `web` publishes 3000 (the wizard's readyz health gate).
+
+name: marquee-selfhost
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gp                       # bootstrap superuser → DIRECT_URL + DATABASE_URL_ADMIN
+      POSTGRES_DB: gp                          # all three URLs target /gp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}  # MUST equal the gp password in DIRECT_URL
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gp -d gp"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    # No healthcheck here: the minio SERVER image's `mc` has no preconfigured
+    # alias, so `mc ready local` never passes. minio-init below is the readiness
+    # signal instead (it self-waits until the server answers).
+
+  # One-shot: wait for minio, then create the app bucket. Exits 0 on success so
+  # `service_completed_successfully` dependents can proceed. Uses $$VAR so the
+  # shell (not compose) expands the creds at runtime.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    environment:
+      MC_USER: ${MINIO_ROOT_USER}
+      MC_PASS: ${MINIO_ROOT_PASSWORD}
+      MC_BUCKET: ${S3_BUCKET}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        until mc alias set local http://minio:9000 "$$MC_USER" "$$MC_PASS" >/dev/null 2>&1; do
+          echo 'waiting for minio...'; sleep 2;
+        done;
+        mc mb --ignore-existing local/"$$MC_BUCKET";
+        echo "minio bucket '$$MC_BUCKET' ready";
+        exit 0
+    restart: "no"
+
+  # One-shot schema + RLS + seed. Image = the `build` stage of apps/web/Dockerfile,
+  # which carries the full pnpm workspace, the generated linux-musl Prisma client,
+  # prisma/rls.sql, the seed, and tsx/prisma CLIs (devDeps). The minimal web/worker
+  # runtime images have none of these, so migrations cannot run via `exec web`.
+  # Order is load-bearing (&&-chained, so any step failing aborts before web boots):
+  #   1. prisma:push (DIRECT_URL=gp)  → tables
+  #   2. db:rls      (DIRECT_URL=gp)  → creates gp_app + gp_migration_admin, RLS policies
+  #   3. seed        (DATABASE_URL_ADMIN=gp) → default tenant + owner + ALTER ROLE gp_app PASSWORD
+  # All idempotent → safe to re-run on every boot.
+  migrate:
+    image: marquee-migrate:local
+    working_dir: /repo
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - >
+        pnpm --filter @marquee/db prisma:push &&
+        pnpm --filter @marquee/db db:rls &&
+        pnpm --filter @marquee/db seed
+    restart: "no"
+
+  web:
+    image: marquee-web:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # This container's 2-of-3 device fingerprint differs from the HOST that
+      # activated token.jws (via the wizard), so the in-container license check
+      # would otherwise always report fingerprint_mismatch. Verify the token
+      # signature + expiry/grace but skip the device fingerprint — device binding
+      # legitimately happened at host activation, and single-seat is enforced
+      # server-side. Without this, enabling MARQUEE_LICENSE_HARD_STOP would brick
+      # every container on a paying buyer's install.
+      MARQUEE_LICENSE_SKIP_FINGERPRINT: "1"
+      # ABSOLUTE data paths (override the .env's relative ./data/*). The Next
+      # standalone server process.chdir()s to /app/apps/web, so a relative
+      # ./data/secrets would resolve to an EPHEMERAL /app/apps/web/data/secrets
+      # (lost on every container recreate, never the bind mount, never shared with
+      # the worker). Absolute /app/data/* always hits the bind-mounted volume, so
+      # filesystem secrets + the license token persist and web/worker share them.
+      SECRETS_DIR: /app/data/secrets
+      STORAGE_DIR: /app/data/storage
+      MARQUEE_LICENSE_DIR: /app/data/license
+    # Lets the container reach services on the host Mac (e.g. Astro Desktop's MCP
+    # server on 127.0.0.1:8089). AstroMcpClient remaps a loopback MCP endpoint to
+    # host.docker.internal in self-host; this makes that name resolve on Docker
+    # Desktop too (OrbStack provides it natively, but host-gateway is portable).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3000:3000"                # REQUIRED: wizard health gate hits 127.0.0.1:3000/api/v1/readyz
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      # Relative ./data/* in .env resolve against the container WORKDIR /app.
+      # Bind-mounting install_dir/data/* makes them durable and shares the
+      # encrypted secrets + license token with the worker.
+      - ./data/secrets:/app/data/secrets
+      - ./data/storage:/app/data/storage
+      - ./data/license:/app/data/license
+
+  worker:
+    image: marquee-worker:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      WORKER_CONCURRENCY: "4"
+      # See web service: the worker runs in a container whose device fingerprint
+      # differs from the activating HOST. Verify signature + expiry, skip the
+      # device-fingerprint check (host did the device binding at activation;
+      # single-seat is server-enforced). This is the service whose logs show
+      # `license: fingerprint_mismatch (ok=false)` without it.
+      MARQUEE_LICENSE_SKIP_FINGERPRINT: "1"
+      # Absolute data paths — same rationale as web (the worker's cwd is /app, but
+      # pinning these keeps web + worker on the SAME bind-mounted dirs regardless of
+      # cwd, so the worker reads the secrets + license token the web/wizard wrote).
+      SECRETS_DIR: /app/data/secrets
+      STORAGE_DIR: /app/data/storage
+      MARQUEE_LICENSE_DIR: /app/data/license
+    # Same as web: reach the host Mac (Astro Desktop MCP) for the ASO autopilot jobs.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./data/secrets:/app/data/secrets
+      - ./data/storage:/app/data/storage
+      - ./data/license:/app/data/license   # worker reads token.jws that web/wizard wrote
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

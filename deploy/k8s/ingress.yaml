@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gp-web
+  namespace: marquee
+  annotations:
+    # nginx-ingress example — adjust for your controller (Traefik, ALB, etc).
+    nginx.ingress.kubernetes.io/proxy-body-size: "150m"  # AAB upload headroom
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"  # 30 min for Apple upload commit
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    nginx.ingress.kubernetes.io/server-snippet: |
+      # Block /api/v1/metrics from public — must be scraped from inside the cluster
+      location /api/v1/metrics { deny all; return 404; }
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [app.example.com]
+      secretName: gp-web-tls
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gp-web
+                port: { number: 80 }

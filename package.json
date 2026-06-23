@@ -1,0 +1,67 @@
+{
+  "name": "releaseflight",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "description": "Release Flight (Community Edition) — open-source control surface for App Store Connect + Google Play. Multi-tenant metadata, screenshots, app previews and ASO intelligence for games and apps. Self-host with one command.",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:webpack": "pnpm --filter @marquee/web dev:webpack",
+    "warmup": "pnpm --filter @marquee/web warmup",
+    "fast": "scripts/fast-dev.sh",
+    "build": "turbo run build",
+    "start": "pnpm --filter @marquee/web start",
+    "lint": "eslint .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:unit": "turbo run test:unit",
+    "test:integration": "turbo run test:integration",
+    "test:security": "turbo run test --filter=@marquee/core --filter=@marquee/web --filter=@marquee/storage --filter=@marquee/secrets --filter=@marquee/api-contracts --filter=@marquee/runner",
+    "test:e2e": "playwright test --config=e2e/playwright.config.ts",
+    "test:load:baseline": "k6 run tests/load/baseline.js",
+    "test:load:probes": "k6 run tests/load/public-probes.js",
+    "test:load:auth": "k6 run tests/load/auth-burst.js",
+    "test:chaos": "tests/chaos/run-all.sh",
+    "prepare": "husky || true",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json,yml,yaml}\" --ignore-path .gitignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,md,json,yml,yaml}\" --ignore-path .gitignore",
+    "db:generate": "pnpm --filter @marquee/db prisma:generate",
+    "db:push": "pnpm --filter @marquee/db prisma:push",
+    "db:rls": "pnpm --filter @marquee/db db:rls",
+    "db:setup": "pnpm --filter @marquee/db db:setup",
+    "db:reset": "pnpm --filter @marquee/db prisma:reset",
+    "db:seed": "pnpm --filter @marquee/db seed",
+    "db:studio": "pnpm --filter @marquee/db prisma:studio",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@next/eslint-plugin-next": "^16.2.9",
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.7.5",
+    "eslint": "^10.5.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "husky": "^9.1.6",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.3.3",
+    "prettier-plugin-tailwindcss": "^0.8.0",
+    "turbo": "^2.1.3",
+    "typescript": "^5.6.2",
+    "typescript-eslint": "^8.61.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "ioredis": "5.10.1"
+    },
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "@types/react"
+      ]
+    }
+  }
+}

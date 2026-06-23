@@ -1,0 +1,32 @@
+#!/usr/bin/env sh
+# GamePublisher pre-commit hook
+#
+# Runs three checks against the changed files only — keeps it fast (~1 s
+# for small changes, ~10 s for large refactors):
+#
+#   1. lint-staged — eslint --fix + prettier on staged files
+#   2. gitleaks — scans staged contents for credential patterns
+#   3. type-check on the changed packages (only if a .ts file touched)
+#
+# Bypass with `git commit --no-verify` ONLY in genuine emergencies.
+
+set -e
+
+# 1. lint-staged
+if [ -f "node_modules/.bin/lint-staged" ]; then
+  node_modules/.bin/lint-staged
+fi
+
+# 2. gitleaks pre-commit (warn if binary not installed, do not block)
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --no-banner --config .gitleaks.toml \
+    || { echo ""; echo "⚠️  gitleaks rejected the commit. Review the leak then add to .gitleaks.toml allowlist if it's a fixture."; exit 1; }
+else
+  echo "ℹ️  gitleaks not installed — skipping local scan (CI will still catch it)"
+fi
+
+# 3. typecheck only if a TS file is staged
+if git diff --cached --name-only --diff-filter=ACM | grep -qE '\.tsx?$'; then
+  echo "→ tsc on affected packages"
+  pnpm typecheck
+fi

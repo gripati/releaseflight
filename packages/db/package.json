@@ -1,0 +1,41 @@
+{
+  "name": "@marquee/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./prisma": "./src/prisma.ts",
+    "./tenant-context": "./src/tenantContext.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push && pnpm db:rls",
+    "prisma:push:schema-only": "prisma db push",
+    "prisma:reset": "prisma db push --force-reset --accept-data-loss && pnpm db:rls && pnpm seed",
+    "prisma:studio": "prisma studio",
+    "db:rls": "prisma db execute --file prisma/rls.sql --schema prisma/schema.prisma",
+    "db:setup": "prisma db push && pnpm db:rls",
+    "seed": "tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.20.0",
+    "argon2": "^0.41.1"
+  },
+  "devDependencies": {
+    "@marquee/core": "workspace:*",
+    "@testcontainers/postgresql": "^10.13.0",
+    "@types/node": "^22.7.5",
+    "prisma": "^5.20.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2"
+  }
+}

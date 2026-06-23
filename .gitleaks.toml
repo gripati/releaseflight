@@ -1,0 +1,61 @@
+title = "GamePublisher gitleaks rules"
+
+# Use Gitleaks' default rules as a baseline, then layer custom rules for
+# the credential shapes this product handles every day. The most common
+# false-positive vectors are test fixtures and the LogRedactor unit tests,
+# so we whitelist those explicitly.
+
+[extend]
+useDefault = true
+
+# ────────────────────────────────────────────────────────────────────
+# Custom rules — app store credentials this codebase is built around
+# ────────────────────────────────────────────────────────────────────
+
+[[rules]]
+id = "apple-private-key"
+description = "Apple App Store Connect .p8 EC private key (PKCS#8 PEM)"
+regex = '''-----BEGIN PRIVATE KEY-----[A-Za-z0-9+/=\s]+-----END PRIVATE KEY-----'''
+tags = ["key", "apple", "p8"]
+
+[[rules]]
+id = "google-service-account-json"
+description = "Google service-account JSON file (full payload)"
+regex = '''"type"\s*:\s*"service_account"[^}]+"private_key"\s*:\s*"-----BEGIN PRIVATE KEY-----'''
+tags = ["key", "google", "service-account"]
+
+[[rules]]
+id = "google-private-key-line"
+description = "Google service-account private_key field"
+regex = '''"private_key"\s*:\s*"-----BEGIN PRIVATE KEY-----\\n[^"]+'''
+tags = ["key", "google"]
+
+[[rules]]
+id = "firebase-token"
+description = "Firebase App Distribution refresh token (1//... pattern)"
+regex = '''1//[A-Za-z0-9_-]{43,}'''
+tags = ["key", "firebase"]
+
+# ────────────────────────────────────────────────────────────────────
+# Allowlist — these are NOT real secrets, just fixtures or examples
+# ────────────────────────────────────────────────────────────────────
+
+[allowlist]
+description = "Documentation & test fixtures intentionally include placeholder secrets"
+paths = [
+    '''docs/.*''',
+    '''.*\.test\.ts$''',
+    '''.*\.spec\.ts$''',
+    '''packages/.*/__tests__/.*''',
+    '''e2e/tests/.*''',
+    '''tests/load/.*''',
+    '''\.env\.example$''',
+    '''README\.md$''',
+    '''\.gitleaks\.toml$''',
+]
+regexes = [
+    '''change-me-after-first-login''',
+    '''ci-test-secret-min-32-chars-long-enough''',
+    '''dummy-private-key''',
+    '''-----BEGIN PRIVATE KEY-----\\nABC\\n-----END PRIVATE KEY-----''',
+]

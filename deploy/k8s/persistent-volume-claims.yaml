@@ -1,0 +1,17 @@
+# Persistent volumes for the secret-store fallback (filesystem provider)
+# and the on-disk storage provider. In production prefer AWS SM / Vault for
+# secrets and S3 for storage — these PVCs exist for environments that
+# need the simpler self-host configuration.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gp-secrets-pvc
+  namespace: marquee
+  labels:
+    app.kubernetes.io/part-of: marquee
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: standard-rwx
+  resources:
+    requests:
+      storage: 1Gi

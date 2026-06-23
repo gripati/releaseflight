@@ -1,0 +1,180 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gp-web
+  namespace: marquee
+  labels:
+    app.kubernetes.io/name: gp-web
+    app.kubernetes.io/part-of: marquee
+    app.kubernetes.io/component: web
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gp-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gp-web
+        app.kubernetes.io/part-of: marquee
+        app.kubernetes.io/component: web
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/api/v1/metrics"
+    spec:
+      serviceAccountName: gp-web
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: gp-web
+      containers:
+        - name: web
+          # Pin to an immutable release tag, never :latest. `:latest` + the old
+          # IfNotPresent meant a node with ANY cached :latest ran stale/unknown
+          # code. CD should substitute a specific version or, ideally, an
+          # @sha256 digest. IfNotPresent is safe with an immutable tag.
+          image: ghcr.io/gripati/gp-web:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: gp-web-config
+            - secretRef:
+                name: gp-web-env
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          # Liveness — kill if /healthz fails for 30s (3 × 10s)
+          livenessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Readiness — pull out of LB if DB/Redis unhealthy
+          readinessProbe:
+            httpGet:
+              path: /api/v1/readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+            successThreshold: 1
+          # Startup — give cold app up to 60s to come up
+          startupProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+            - name: secrets-data
+              mountPath: /data/secrets
+      volumes:
+        - name: cache
+          emptyDir: { sizeLimit: 1Gi }
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+        - name: secrets-data
+          persistentVolumeClaim:
+            claimName: gp-secrets-pvc
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gp-web
+  namespace: marquee
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gp-web
+  namespace: marquee
+  labels:
+    app.kubernetes.io/name: gp-web
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gp-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gp-web
+  namespace: marquee
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gp-web
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 30
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gp-web
+  namespace: marquee
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gp-web

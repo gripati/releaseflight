@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.turbo/
+dist/
+build/
+coverage/
+playwright-report/
+**/*.lock
+**/pnpm-lock.yaml
+**/prisma/migrations/
+data/
+scratch/

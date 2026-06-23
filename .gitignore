@@ -1,0 +1,65 @@
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+
+# Build
+dist/
+build/
+# …but apps/runner/src/build is SOURCE code, not build output — keep it tracked.
+!apps/runner/src/build/
+!apps/runner/src/build/**
+*.tsbuildinfo
+
+# Env
+.env
+.env*.local
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+coverage/
+playwright-report/
+test-results/
+.nyc_output/
+
+# Storage
+data/
+scratch/
+!scratch/.gitkeep
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.example.json
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — NEVER commit (runtime secret dirs). NOTE: packages/secrets is SOURCE
+# CODE (the AES-256-GCM envelope crypto), not a runtime secret store — keep it.
+**/secrets/
+!packages/secrets/
+!packages/secrets/src/
+!packages/secrets/src/**
+!packages/secrets/package.json
+!packages/secrets/tsconfig.json
+!packages/secrets/vitest.config.ts
+**/*.p8
+**/*.pem
+**/service-account*.json
+**/google-services*.json
+**/GoogleService-Info*.plist
+
+# Turbo
+.turbo/
+
+# Prisma generated
+**/prisma/migrations/migration_lock.toml.bak

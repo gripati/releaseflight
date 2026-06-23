@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gp-web-config
+  namespace: marquee
+data:
+  NODE_ENV: production
+  DEPLOY_MODE: self_host
+  APP_URL: https://app.example.com
+  APP_NAME: Release Flight
+  LOG_LEVEL: info
+  SECRET_PROVIDER: filesystem
+  SECRETS_DIR: /data/secrets
+  STORAGE_DIR: /data/storage
+  S3_ENDPOINT: http://minio:9000
+  S3_REGION: us-east-1
+  S3_BUCKET: gamepublisher
+  S3_FORCE_PATH_STYLE: "true"
+  SESSION_COOKIE_NAME: gp_session
+  SESSION_TTL_DAYS: "7"

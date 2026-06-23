@@ -1,0 +1,1484 @@
+// GamePublisher — multi-tenant schema (V1)
+// Every tenant-scoped model has tenantId + composite unique constraints.
+// Postgres Row-Level Security policies are applied via migrations.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// TENANCY
+// ──────────────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id                String       @id @default(uuid()) @db.Uuid
+  slug              String       @unique
+  name              String
+  status            TenantStatus @default(ACTIVE)
+  deployedAs        DeployMode   @default(SELF_HOST)
+
+  // SaaS-only (null in self_host)
+  stripeCustomerId  String?
+  planTier          PlanTier     @default(FREE)
+  trialEndsAt       DateTime?
+
+  // Limits — bypassed in self_host
+  maxApps           Int          @default(5)
+  maxMembers        Int          @default(3)
+  maxPushesPerMonth Int          @default(100)
+
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  members           TenantMember[]
+  credentials       Credential[]
+  apps              App[]
+  auditEvents       AuditEvent[]
+  jobs              Job[]
+  settings          TenantSetting[]
+  analyticsSnapshots AnalyticsSnapshot[]
+  analyticsFunnels  AnalyticsFunnel[]
+  trackedKeywords   TrackedKeyword[]
+  keywordSignals    KeywordSignal[]
+  metadataSnapshots MetadataSnapshot[]
+  aiUsage           AiUsage[]
+  learnedNoise      LearnedNoiseTerm[]
+  competitors       Competitor[]
+  competitorRanks   CompetitorRank[]
+  competitorSnapshots CompetitorSnapshot[]
+  asoAlarms         AsoAlarm[]
+  asoNotifications  AsoNotification[]
+  asoDailyChecks    AsoDailyCheck[]
+  appConnections    AppConnection[]
+  appBuildConfigs   AppBuildConfig[]
+  builds            Build[]
+
+  @@index([slug])
+  @@index([status])
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_DELETE
+}
+
+enum DeployMode {
+  SELF_HOST
+  SAAS
+}
+
+enum PlanTier {
+  FREE
+  PRO
+  TEAM
+  ENTERPRISE
+}
+
+model User {
+  id                String     @id @default(uuid()) @db.Uuid
+  email             String     @unique
+  emailVerifiedAt   DateTime?
+  passwordHash      String?
+  displayName       String
+  avatarUrl         String?
+  status            UserStatus @default(ACTIVE)
+
+  totpSecret        String?
+  webauthnEnabled   Boolean    @default(false)
+  defaultTenantId   String?    @db.Uuid
+
+  // Set when an admin provisions the account with a temporary password; the
+  // user is forced to set their own password on first sign-in, after which it
+  // is cleared. See POST /api/v1/auth/change-password and the dashboard guard.
+  mustChangePassword Boolean   @default(false)
+
+  lastLoginAt       DateTime?
+  lastLoginIp       String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  sessions          Session[]
+  memberships       TenantMember[]
+  auditEvents       AuditEvent[]
+  jobs              Job[]
+
+  @@index([email])
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  PENDING_VERIFICATION
+}
+
+model TenantMember {
+  tenantId      String      @db.Uuid
+  userId        String      @db.Uuid
+  role          TenantRole
+  allowedAppIds String[]    @default([])
+  joinedAt      DateTime    @default(now())
+  invitedById   String?     @db.Uuid
+
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, userId])
+  @@index([userId])
+}
+
+enum TenantRole {
+  OWNER
+  ADMIN
+  MAINTAINER
+  EDITOR
+  VIEWER
+}
+
+model Session {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
+  activeTenantId  String?  @db.Uuid
+  tokenHash       String   @unique
+  userAgent       String?
+  ipAddress       String?
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  lastUsedAt      DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// CREDENTIALS — only secret REFERENCES; raw material lives in SecretProvider
+// ──────────────────────────────────────────────────────────────────────────
+
+model Credential {
+  id                String         @id @default(uuid()) @db.Uuid
+  tenantId          String         @db.Uuid
+  kind              CredentialKind
+  name              String
+  appleKeyId        String?
+  appleIssuerId     String?
+  /// Apple Sales and Trends vendor number. Required to pull /v1/salesReports
+  /// (works for any app with at least one unit; Analytics Reports require
+  /// ~1000 monthly active users to unlock so we use Sales Reports as the
+  /// universal fallback).
+  appleVendorNumber String?
+  googleClientEmail String?
+  googleProjectId   String?
+  /// Free-form config for non-Apple/non-Google providers — currently
+  /// used by ASO_RESEARCH_MCP to carry the endpoint URL + optional
+  /// tool name. JSON shape is per-kind, validated at the API layer.
+  metadata          Json?
+  secretRef         String         // e.g. "filesystem:///tenants/<id>/<credId>.p8"
+  lastTestedAt      DateTime?
+  lastTestSucceeded Boolean?
+  lastTestMessage   String?
+  createdById       String         @db.Uuid
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  rotatedAt         DateTime?
+  isActive          Boolean        @default(true)
+
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  apps              App[]
+
+  @@index([tenantId, kind])
+  @@index([tenantId, isActive])
+}
+
+enum CredentialKind {
+  APPLE
+  GOOGLE
+  AI_ANTHROPIC
+  AI_OPENAI
+  AI_GEMINI
+  // Third-party ASO research providers — endpoint + bearer token live
+  // in the secret manager, optional config (toolName) on the row's
+  // metadata. Same kind covers Astro / AppTweak / Sensor Tower / etc.
+  // because they all expose an MCP-style HTTP endpoint we treat as a
+  // black box. APPLE_SEARCH_ADS was removed in the 2026-05 ASO
+  // simplification — Astro is the single source of truth for keyword
+  // signal data.
+  ASO_RESEARCH_MCP
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// APPS + METADATA
+// ──────────────────────────────────────────────────────────────────────────
+
+model App {
+  id                          String        @id @default(uuid()) @db.Uuid
+  tenantId                    String        @db.Uuid
+  credentialId                String        @db.Uuid
+
+  platform                    Platform
+  bundleId                    String
+  storeAppId                  String?
+  appName                     String
+  primaryLocale               String
+
+  versionId                   String?
+  versionString               String?
+  status                      String?
+  releaseType                 ReleaseType?
+  earliestReleaseDate         DateTime?
+  copyright                   String?
+  teamId                      String?
+
+  availableLanguages          String[]      @default([])
+  discoveredScreenshotTypes   String[]      @default([])
+  discoveredPreviewTypes      String[]      @default([])
+
+  storeUrl                    String?
+  isConnected                 Boolean       @default(true)
+  dirty                       Boolean       @default(false)
+  lastFetchedAt               DateTime?
+  lastPushedAt                DateTime?
+
+  createdById                 String        @db.Uuid
+  createdAt                   DateTime      @default(now())
+  updatedAt                   DateTime      @updatedAt
+
+  tenant                      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  credential                  Credential    @relation(fields: [credentialId], references: [id])
+  localizations               AppLocalization[]
+  screenshots                 Screenshot[]
+  appPreviews                 AppPreview[]
+  androidImages               AndroidImage[]
+  jobs                        Job[]
+  auditEvents                 AuditEvent[]
+  analyticsSnapshots          AnalyticsSnapshot[]
+  analyticsFunnels            AnalyticsFunnel[]
+  trackedKeywords             TrackedKeyword[]
+  metadataSnapshots           MetadataSnapshot[]
+  aiKeywordSuggestions        AiKeywordSuggestion[]
+  aiRelevanceCache            AiRelevanceCache[]
+  competitors                 Competitor[]
+  asoAlarms                   AsoAlarm[]
+  asoNotifications            AsoNotification[]
+  asoDailyChecks              AsoDailyCheck[]
+  connections                 AppConnection[]
+  buildConfig                 AppBuildConfig?
+  builds                      Build[]
+
+  @@unique([tenantId, platform, bundleId])
+  @@index([tenantId])
+  @@index([tenantId, credentialId])
+}
+
+enum Platform {
+  IOS
+  ANDROID
+}
+
+enum ReleaseType {
+  MANUAL
+  AFTER_APPROVAL
+  SCHEDULED
+}
+
+model AppLocalization {
+  id                          String   @id @default(uuid()) @db.Uuid
+  tenantId                    String   @db.Uuid
+  appId                       String   @db.Uuid
+  locale                      String
+
+  appleAppInfoLocalizationId  String?
+  appleVersionLocalizationId  String?
+
+  name                        String?
+  subtitle                    String?
+  description                 String?
+  keywords                    String?
+  whatsNew                    String?
+  promotionalText             String?
+  marketingUrl                String?
+  supportUrl                  String?
+  privacyPolicyUrl            String?
+  shortDescription            String?
+  videoUrl                    String?
+
+  dirty                       Boolean  @default(false)
+  lastFetchedAt               DateTime?
+  lastPushedAt                DateTime?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  app                         App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, locale])
+  @@index([tenantId])
+  @@index([appId])
+  @@index([tenantId, dirty])
+}
+
+/// Per-locale cache of the user's last "AI keyword recommendations"
+/// call. The MetadataEditor's KeywordRecommendationsPanel re-hydrates
+/// from this on page load so the panel doesn't go blank between
+/// refreshes — the user keeps seeing yesterday's ideas until they
+/// click Regenerate.
+///
+/// `payload` is the entire `KeywordRecommendationsResponse` minus
+/// `locale` (which we have from the unique key) so the client can
+/// rebuild its in-memory state without re-running the AI call.
+/// Refresh is an UPSERT keyed by (appId, locale) — one row per locale.
+model AiKeywordSuggestion {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  appId        String   @db.Uuid
+  locale       String
+  payload      Json
+  generatedAt  DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  app          App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, locale])
+  @@index([tenantId])
+  @@index([appId])
+}
+
+model Screenshot {
+  id                    String          @id @default(uuid()) @db.Uuid
+  tenantId              String          @db.Uuid
+  appId                 String          @db.Uuid
+  locale                String
+
+  appleScreenshotId     String?
+  appleScreenshotSetId  String?
+  appleDisplayType      String?
+
+  googleImageId         String?
+  googleImageType       String?
+
+  fileName              String
+  width                 Int
+  height                Int
+  ordinal               Int
+  state                 ScreenshotState
+
+  storageKey            String?
+  thumbnailKey          String?
+  upstreamUrl           String?
+  sourceFileChecksum    String?
+  fileSize              Int?
+
+  uploadedAt            DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  createdBy             String?         @db.Uuid
+
+  app                   App             @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, appId, locale])
+  @@index([state])
+}
+
+enum ScreenshotState {
+  PENDING
+  UPLOADING
+  COMMITTING
+  PROCESSING
+  COMPLETE
+  UPLOAD_FAILED
+  REJECTED
+}
+
+model AppPreview {
+  id                    String          @id @default(uuid()) @db.Uuid
+  tenantId              String          @db.Uuid
+  appId                 String          @db.Uuid
+  locale                String
+
+  applePreviewId        String?
+  applePreviewSetId     String?
+  applePreviewType      String
+
+  fileName              String
+  width                 Int?
+  height                Int?
+  ordinal               Int
+  state                 ScreenshotState
+
+  storageKey            String?
+  thumbnailKey          String?
+  upstreamVideoUrl      String?
+  upstreamPosterUrl     String?
+  sourceFileChecksum    String?
+  fileSize              Int?
+  previewFrameTimeCode  String?
+  mimeType              String?
+
+  uploadedAt            DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  createdBy             String?         @db.Uuid
+
+  app                   App             @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, appId, locale])
+}
+
+model AndroidImage {
+  id            String           @id @default(uuid()) @db.Uuid
+  tenantId      String           @db.Uuid
+  appId         String           @db.Uuid
+  language      String
+  imageType     AndroidImageType
+  googleImageId String?
+  url           String?
+  sha256        String?
+  storageKey    String?
+  thumbnailKey  String?
+  width         Int?
+  height        Int?
+  state         ScreenshotState
+  uploadedAt    DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  app           App              @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, appId, language])
+}
+
+enum AndroidImageType {
+  ICON
+  FEATURE_GRAPHIC
+  TV_BANNER
+  PROMO_GRAPHIC
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JOBS + AUDIT + SETTINGS
+// ──────────────────────────────────────────────────────────────────────────
+
+model Job {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @db.Uuid
+  userId          String    @db.Uuid
+  appId           String?   @db.Uuid
+  bullJobId       String?   @unique
+  kind            String
+  status          JobStatus
+  payload         Json
+  result          Json?
+  error           Json?
+  progressCurrent Int       @default(0)
+  progressTotal   Int       @default(1)
+  progressStep    String?
+  attempts        Int       @default(0)
+  maxAttempts     Int       @default(3)
+  idempotencyKey  String?
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id])
+  app             App?      @relation(fields: [appId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, idempotencyKey])
+  @@index([createdAt])
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  WAITING_RETRY
+}
+
+model AuditEvent {
+  id            String       @id @default(uuid()) @db.Uuid
+  tenantId      String       @db.Uuid
+  userId        String?      @db.Uuid
+  appId         String?      @db.Uuid
+  action        String
+  target        String?
+  diff          Json?
+  outcome       AuditOutcome
+  errorCode     String?
+  requestId     String?
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime     @default(now())
+
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  app           App?         @relation(fields: [appId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, userId])
+  @@index([tenantId, action])
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+  PARTIAL
+}
+
+model TenantSetting {
+  tenantId  String   @db.Uuid
+  key       String
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, key])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SAAS — Subscription + Usage (no-op in self_host)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Subscription {
+  id                  String             @id @default(uuid()) @db.Uuid
+  tenantId            String             @unique @db.Uuid
+  stripeSubId         String?            @unique
+  status              SubscriptionStatus
+  planTier            PlanTier
+  currentPeriodStart  DateTime
+  currentPeriodEnd    DateTime
+  cancelAtPeriodEnd   Boolean            @default(false)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+}
+
+model UsageRecord {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @db.Uuid
+  yearMonth  String
+  metric     String
+  count      Int      @default(0)
+  recordedAt DateTime @default(now())
+
+  @@unique([tenantId, yearMonth, metric])
+  @@index([tenantId, yearMonth])
+}
+
+model ReservedSlug {
+  // Soft-reserve deleted tenant slugs for 90 days
+  slug          String   @id
+  reservedUntil DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([reservedUntil])
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// ASO Intelligence — Phase 9 foundation
+//
+// Daily snapshots of App Store Connect Analytics, tracked-keyword rank +
+// signal data, and (later phases) Custom Product Pages, PPO experiments
+// and AI-generated recommendations.
+//
+// See docs/16_ASO_INTELLIGENCE.md for the data-flow architecture and
+// keyword scoring formula.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// One row per app per UTC date — roll-up across all sources + territories.
+/// Drives the editorial KPI cards on the ASO Overview page.
+model AnalyticsSnapshot {
+  id                  String   @id @default(uuid()) @db.Uuid
+  tenantId            String   @db.Uuid
+  appId               String   @db.Uuid
+  date                DateTime @db.Date
+
+  impressions         Int      @default(0)
+  pageViews           Int      @default(0)
+  downloads           Int      @default(0)
+  firstTimeDownloads  Int      @default(0)
+  redownloads         Int      @default(0)
+  sessions            Int      @default(0)
+  activeDevices1d     Int      @default(0)
+  activeDevices7d     Int      @default(0)
+  activeDevices30d    Int      @default(0)
+  crashes             Int      @default(0)
+
+  /// installs / pageViews × 100. Stored materialised so charts are O(1).
+  pvcrPct             Decimal  @default(0) @db.Decimal(5, 2)
+
+  /// Raw provider payload, for replay / debugging without re-querying Apple.
+  rawJson             Json?
+
+  createdAt           DateTime @default(now())
+
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app                 App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, date])
+  @@index([tenantId, appId, date])
+}
+
+/// Per-source × per-territory funnel (sparser, denormalised on purpose).
+/// Used for the Sankey + heatmap on the Analytics page.
+model AnalyticsFunnel {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  appId        String   @db.Uuid
+  date         DateTime @db.Date
+  /// SEARCH | BROWSE | APP_REFERRER | WEB_REFERRER | INSTITUTIONAL | UNAVAILABLE
+  source       String
+  /// ISO 3166-1 alpha-2 (e.g. "US", "TR", "DE"). "ALL" for the global roll-up.
+  territory    String
+
+  impressions  Int      @default(0)
+  pageViews    Int      @default(0)
+  downloads    Int      @default(0)
+  pvcrPct      Decimal  @default(0) @db.Decimal(5, 2)
+
+  createdAt    DateTime @default(now())
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app          App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, date, source, territory])
+  @@index([tenantId, appId, date])
+  @@index([appId, source])
+}
+
+/// One row per (app, keyword, territory) the publisher wants to monitor.
+/// `source` records WHERE the row originated so we can blend manual +
+/// AI-suggested + competitor-borrowed terms in the UI.
+model TrackedKeyword {
+  id           String          @id @default(uuid()) @db.Uuid
+  tenantId     String          @db.Uuid
+  appId        String          @db.Uuid
+  keyword      String
+  /// ISO 3166-1 alpha-2 of the App Store storefront the rank is scored against.
+  territory    String
+  source       KeywordSource   @default(MANUAL)
+  status       KeywordStatus   @default(ACTIVE)
+  notes        String?
+  /// Free-form tags for portfolio organization. Reserved tags drive
+  /// dashboard semantics + visual treatment:
+  ///   • "default"    — auto-tagged at onboarding from the app's own
+  ///                    keywordsField. The "ground truth" set the
+  ///                    user originally shipped with.
+  ///   • "adopted"    — swapped IN from an Astro suggestion via the
+  ///                    swap workflow. The "experimental" set.
+  ///   • "own"        — keyword we strategically own + defend.
+  ///   • "competitor" — keyword first surfaced via a competitor's
+  ///                    metadata; we track it because a rival relies
+  ///                    on it.
+  ///   • "watchlist"  — high-volume keyword we want to enter.
+  ///   • "seasonal"   — seasonal keyword (Halloween, Christmas, etc.).
+  /// Plus arbitrary user tags. Tag matching is case-insensitive.
+  tags         String[]        @default([])
+
+  /// Lineage — when this keyword was swapped IN by adopting an Astro
+  /// suggestion, points to the predecessor TrackedKeyword it replaced.
+  /// Lets the UI render "Replaced 'puzzle game' on 2026-05-12".
+  /// Null for organically tracked keywords.
+  replacedFromId String?       @db.Uuid
+  /// Set when THIS keyword was swapped OUT for a newer adoption. The
+  /// row stays archived (status=ARCHIVED) so its historical signals
+  /// remain queryable for "did the swap actually help?" analysis.
+  replacedAt   DateTime?
+
+  createdById  String?         @db.Uuid
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app          App             @relation(fields: [appId], references: [id], onDelete: Cascade)
+  signals      KeywordSignal[]
+  competitorRanks CompetitorRank[]
+  replacedFrom TrackedKeyword? @relation("KeywordLineage", fields: [replacedFromId], references: [id], onDelete: SetNull)
+  successors   TrackedKeyword[] @relation("KeywordLineage")
+
+  @@unique([appId, keyword, territory])
+  @@index([tenantId, appId, status])
+  @@index([appId, territory])
+  @@index([appId, replacedFromId])
+}
+
+/// Competitor app the publisher is actively tracking for ASO purposes.
+/// One row per (appId, competitor) — the SAME competitor can be tracked
+/// for multiple of our apps in the same portfolio.
+///
+/// Competitor monitoring is the inbound counterpart to Astro's outbound
+/// `extract_competitors_keywords` mining: every daily run we snapshot
+/// each competitor's rank on each of our tracked keywords so the
+/// alarm engine can detect intrusions ("Competitor X just entered our
+/// top-5 keyword Y").
+model Competitor {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @db.Uuid
+  appId          String   @db.Uuid
+
+  /// Display name (mirrors App.appName for the competitor).
+  appName        String
+  /// Apple bundleId — primary stable identifier across stores.
+  bundleId       String?
+  /// Apple numeric App Store ID — used to call Astro's tools and the
+  /// iTunes Lookup API (`https://itunes.apple.com/lookup?id=...`).
+  storeAppId     String?
+
+  /// When true, the daily check job snapshots this competitor's ranks
+  /// AND syncs its iTunes-Lookup metadata + screenshots across every
+  /// active territory.
+  monitor        Boolean  @default(true)
+  /// Bucket the user assigns: PRIMARY (top 3 rivals), SECONDARY, WATCH.
+  bucket         String?
+  /// Free-form notes — e.g. "matched our 'offline puzzle' positioning".
+  notes          String?
+
+  // ── Denormalised "latest snapshot" mirrors ─────────────────────────
+  // Reading the most-recent CompetitorSnapshot row for every card on
+  // a list view is wasteful — the operator just wants name + icon +
+  // current version + last-rating to scan. We mirror those fields
+  // here on each sync so the list query stays a single read.
+
+  /// High-res icon URL from Apple (artworkUrl512). URL-only, no cache.
+  iconUrl        String?
+  /// `trackViewUrl` — canonical link back to the App Store listing.
+  trackUrl       String?
+  /// Developer / publisher name (Apple's `sellerName`).
+  sellerName     String?
+  /// Apple primary genre, e.g. "Games", "Productivity".
+  primaryGenre   String?
+  /// 2-letter ISO country code the operator originally pasted the URL
+  /// from. We snapshot every active territory after that, but this
+  /// records the "home" market that motivated the add.
+  ingestCountry  String?
+  /// Most-recent version string seen by the sync job.
+  latestVersion       String?
+  /// Most-recent average rating across all reviews.
+  latestRating        Float?
+  /// Most-recent rating count.
+  latestRatingCount   Int?
+  /// Timestamp of the most-recent successful iTunes Lookup sync.
+  lastSyncedAt        DateTime?
+
+  createdById    String?  @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app            App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+  competitorRanks     CompetitorRank[]
+  competitorSnapshots CompetitorSnapshot[]
+
+  @@unique([appId, bundleId])
+  @@index([tenantId, appId])
+  @@index([appId, monitor])
+}
+
+/// Daily snapshot of a competitor's rank on one of OUR tracked
+/// keywords. Drives the "competitor entered our top keyword" alarm:
+/// the alarm engine compares today's row against yesterday's row and
+/// flags rises ≥10 positions or new-entry-into-top-10 events.
+model CompetitorRank {
+  id                  String   @id @default(uuid()) @db.Uuid
+  tenantId            String   @db.Uuid
+  /// Joins to Competitor row.
+  competitorId        String   @db.Uuid
+  /// Joins to our tracked keyword (so we know which of OUR keywords
+  /// this rank applies to without re-querying by string).
+  trackedKeywordId    String   @db.Uuid
+  date                DateTime @db.Date
+
+  /// 1..50 or null when off-list. Pulled from Astro `search_rankings`
+  /// for the competitor's storeAppId + our keyword + territory.
+  rank                Int?
+
+  createdAt           DateTime @default(now())
+
+  tenant              Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  competitor          Competitor     @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  trackedKeyword      TrackedKeyword @relation(fields: [trackedKeywordId], references: [id], onDelete: Cascade)
+
+  @@unique([competitorId, trackedKeywordId, date])
+  @@index([tenantId, date])
+  @@index([competitorId, date])
+  @@index([trackedKeywordId, date])
+}
+
+/// Daily snapshot of a competitor's iTunes Lookup payload, one row
+/// per (competitor × territory × UTC date). Captured by the
+/// `aso.competitor-sync` job; drives the diff engine that fires a
+/// notification on any change (name, version, screenshots, rating,
+/// description, ...) AND the comparative UI on Keywords > Competitors.
+///
+/// We don't cache screenshot bytes — `iphoneScreenshotUrls` etc. point
+/// straight at Apple's CDN. URLs are stable for the duration a version
+/// is live; when a new version ships the URLs change too, which is
+/// exactly the signal the diff engine watches for.
+model CompetitorSnapshot {
+  id                       String   @id @default(uuid()) @db.Uuid
+  tenantId                 String   @db.Uuid
+  competitorId             String   @db.Uuid
+  /// 2-letter ISO country code (e.g. "US", "TR", "DE"). iTunes Lookup
+  /// returns different listing content per storefront — we capture
+  /// every territory the operator's app is localized into.
+  territory                String
+  /// UTC date the snapshot was captured. Combined with `territory`
+  /// gives the natural unique key per competitor.
+  date                     DateTime @db.Date
+
+  // ── Listing fields ─────────────────────────────────────────────────
+  /// `trackName` from iTunes Lookup.
+  name                     String?
+  /// iOS subtitle (Apple returns it inside `description` on older
+  /// payloads; we extract during normalisation).
+  subtitle                 String?
+  /// Long-form description.
+  description              String?
+  /// Release notes for the current version.
+  releaseNotes             String?
+  /// e.g. "2.4.1".
+  version                  String?
+  /// When the current version went live in this storefront.
+  currentVersionReleaseDate DateTime?
+
+  // ── Ratings ───────────────────────────────────────────────────────
+  /// Lifetime average user rating (0..5).
+  averageUserRating              Float?
+  /// Lifetime rating count.
+  userRatingCount                Int?
+  /// Average rating scoped to current-version reviews only.
+  averageUserRatingForCurrentVersion Float?
+  /// Rating count scoped to current-version reviews only.
+  userRatingCountForCurrentVersion   Int?
+
+  // ── Imagery (URL-only — no caching) ────────────────────────────────
+  /// High-res app icon (artworkUrl512).
+  iconUrl                  String?
+  /// iPhone screenshot URLs in the order Apple returns them.
+  iphoneScreenshotUrls     String[]
+  /// iPad screenshot URLs — empty on iPhone-only apps.
+  ipadScreenshotUrls       String[]
+
+  // ── Listing meta ──────────────────────────────────────────────────
+  sellerName               String?
+  primaryGenre             String?
+  primaryGenreId           Int?
+  /// All genres Apple tagged (denormalised name array, e.g.
+  /// ["Games", "Puzzle", "Casual"]).
+  genres                   String[]
+  contentAdvisoryRating    String?
+  minimumOsVersion         String?
+  /// ISO-639-1 codes the listing is localized into.
+  languageCodes            String[]
+
+  // ── Pricing ───────────────────────────────────────────────────────
+  price                    Float?
+  currency                 String?
+  formattedPrice           String?
+
+  /// Canonical App Store URL for this listing in this storefront
+  /// (Apple's `trackViewUrl`). Useful for the "view on store" link.
+  trackUrl                 String?
+
+  /// Wall-clock when the iTunes Lookup call returned this payload.
+  /// Different from `date` so a same-day re-sync keeps the original
+  /// row but stamps when it was last refreshed.
+  fetchedAt                DateTime @default(now())
+
+  tenant                   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  competitor               Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@unique([competitorId, territory, date])
+  @@index([tenantId, date])
+  @@index([competitorId, fetchedAt])
+}
+
+enum KeywordSource {
+  MANUAL                // user typed it
+  APP_METADATA          // imported from the app's own per-locale keywords field
+  AI_SUGGESTED          // proposed by Claude/OpenAI/Gemini, accepted into tracking
+  APPLE_RECOMMENDED     // came from Apple Search Ads suggestions
+  COMPETITOR_BORROWED   // scraped from a top-ranking competitor's metadata
+  ASTRO_CSV             // imported from Astro ASO desktop tool
+}
+
+enum KeywordStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+/// One row per (TrackedKeyword × UTC date) — daily signal snapshot.
+/// Composite score lives here, computed by the scoring pipeline; raw
+/// inputs are kept for debugging.
+/// Daily Astro snapshot for a tracked keyword. All non-Astro signal
+/// sources (Apple Search Ads, Apple Search Hints, Google Trends, iTunes
+/// Search competitor count, local visibility share) were removed in the
+/// 2026-05 ASO simplification. Astro MCP is now the single source of
+/// truth — see docs/16_ASO_INTELLIGENCE.md. Rows are upserted by the
+/// `aso.astro.analyze` job (one per tracked keyword × today).
+model KeywordSignal {
+  id                   String   @id @default(uuid()) @db.Uuid
+  tenantId             String   @db.Uuid
+  trackedKeywordId     String   @db.Uuid
+  date                 DateTime @db.Date
+
+  /// Our app's App Store rank for this keyword (1-indexed, null when
+  /// outside top 50). Pulled from Astro's `search_rankings`.
+  appStoreRank         Int?
+
+  /// Astro popularity (0–100). On Astro's tracked-keyword payload this
+  /// is Apple's real search index (Apple Search Ads 0–5 × 20).
+  volume               Int?
+  /// Scale cap so the UI can render volume / maxVolume %.
+  maxVolume            Int?
+  /// 0–100 Astro keyword difficulty — higher = harder to rank for.
+  difficulty           Int?
+  /// Astro's "max reach chance" — estimated impressions if ranked #1.
+  maxReachChance       Int?
+
+  /// Composite Astro score (0..1), see packages/aso/src/scoring/keywordScore.ts
+  score                Decimal? @db.Decimal(4, 3)
+  /// Bucket label: CHAMPION | OPPORTUNITY | RISING | DECAY | NEUTRAL
+  bucket               String?
+
+  createdAt            DateTime @default(now())
+
+  tenant               Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trackedKeyword       TrackedKeyword @relation(fields: [trackedKeywordId], references: [id], onDelete: Cascade)
+
+  @@unique([trackedKeywordId, date])
+  @@index([tenantId, date])
+  @@index([trackedKeywordId, date])
+}
+
+/// Point-in-time copy of an app's ASO-relevant metadata, written every
+/// time `metadata.push` succeeds. Powers the "keyword stock market" —
+/// we overlay these timestamps on the downloads chart so the user can
+/// see exactly how each push affected the funnel.
+///
+/// One row per (app × locale × push timestamp). The `pushAuditId`
+/// links back to the audit event for full traceability.
+model MetadataSnapshot {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  appId           String   @db.Uuid
+  /// Canonical locale (e.g. "en-US", "tr-TR")
+  locale          String
+  /// When the push that produced this snapshot completed.
+  pushedAt        DateTime
+  /// App Store name / Play Store title (≤30 / 50 chars)
+  name            String?
+  /// iOS subtitle (≤30 chars) — null for Android
+  subtitle        String?
+  /// iOS 100-char keywords field — the single highest-leverage ASO surface
+  keywordsField   String?
+  /// Long description (≤4000 chars) — full text, indexed by Google Play
+  description     String?
+  /// iOS promotional text (≤170 chars) — not indexed but appears at top of listing
+  promotionalText String?
+  /// Android-only short description (≤80 chars)
+  shortDescription String?
+
+  /// The user who triggered the push.
+  pushedById      String?  @db.Uuid
+  /// AuditEvent linking back to the push action — for full traceability.
+  pushAuditId     String?  @db.Uuid
+
+  createdAt       DateTime @default(now())
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app             App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, appId, pushedAt])
+  @@index([appId, locale, pushedAt])
+}
+
+/// Per-tenant per-month AI provider spend. Drives the budget guardrail
+/// and the "tokens consumed this month" badge in Settings.
+model AiUsage {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  /// claude | openai | gemini — matches `Credential.kind` AI_* values.
+  provider     String
+  model        String
+  /// "2026-05" — UTC year-month key for cheap monthly aggregation.
+  yearMonth    String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  usdCost      Decimal  @default(0) @db.Decimal(10, 4)
+  requestCount Int      @default(0)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, provider, yearMonth])
+  @@index([tenantId, yearMonth])
+}
+
+/// Per-tenant LEARNED noise blocklist — terms that the user has
+/// explicitly rejected (3+ times) as irrelevant Astro proposals.
+/// The autopilot's `isAsoNoiseCandidate` consults this in addition
+/// to the static `ASO_NOISE_BLOCKLIST` constant, so generic terms
+/// that aren't worth proposing for THIS tenant's apps don't keep
+/// surfacing.
+///
+/// Why "3 times" instead of single-rejection? Because a one-off
+/// rejection might be a context-specific judgement call (the user
+/// happens not to want this keyword right now). Three independent
+/// rejects across multiple analyze runs / multiple apps signals
+/// "this term is structurally noise for this tenant" — a learnable
+/// pattern, not a one-off opinion.
+model LearnedNoiseTerm {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  /// Lowercased noise candidate. Matched against `ASO_NOISE_BLOCKLIST`
+  /// equality, NOT substring. Multi-word entries are allowed —
+  /// "credit card" can be a learned noise pattern.
+  term            String
+  /// Counter — increments each time a user rejects an Astro proposal
+  /// containing this term. The autopilot starts filtering at ≥ 3.
+  rejectCount     Int      @default(0)
+  /// Most recent reject timestamp — used for TTL eviction of stale
+  /// rejections (a term re-considered after 6 months gets a fresh start).
+  lastRejectedAt  DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, term])
+  @@index([tenantId, rejectCount])
+  @@index([tenantId, lastRejectedAt])
+}
+
+/// Daily ASO check state — one row per (app × UTC date). Tracks what
+/// was reviewed during today's daily-check job + the AI analyst's
+/// interpretation. The per-app daily dashboard reads the freshest
+/// row to render today's status; the global portfolio page lists
+/// the latest per app.
+///
+/// Why this row instead of just reading raw signal tables? Because
+/// the daily check is a STATEFUL workflow: alarms fire once, the
+/// analyst writes once, the user reviews. We don't want to recompute
+/// the report every render. The row is the persisted reproducible
+/// snapshot of "what the analyst thought about app X on date Y".
+model AsoDailyCheck {
+  id                  String   @id @default(uuid()) @db.Uuid
+  tenantId            String   @db.Uuid
+  appId               String   @db.Uuid
+  /// UTC date the check covers — primary axis for "latest per app".
+  date                DateTime @db.Date
+
+  /// Snapshot of high-level KPIs (impressions, page views, downloads,
+  /// CVR) computed against the previous 7-day baseline. JSONB so the
+  /// shape can evolve without migrations.
+  metricsSnapshot     Json?
+  /// Per-keyword rank deltas (rises, falls, decay entries) versus
+  /// yesterday. Powers the dashboard "today's movers" panels.
+  keywordDeltas       Json?
+  /// Competitor movements detected today (intrusions, rank rises,
+  /// new metadata changes when we can detect them).
+  competitorMoves     Json?
+  /// Triggered alarm IDs from AsoAlarm — for cross-reference.
+  alarmsTriggered     String[] @default([])
+  /// ASO Analyst AI output for the day — headline + top-3 priorities
+  /// + per-alarm interpretation + suggested actions.
+  analystReport       Json?
+  /// Status of the day's check workflow:
+  ///   PENDING   — created but not yet executed.
+  ///   RUNNING   — daily-check job in progress.
+  ///   COMPLETED — alarms evaluated + analyst ran successfully.
+  ///   FAILED    — analyst or alarm engine errored; report null.
+  status              String   @default("PENDING")
+  /// User who marked the check as reviewed (closed the daily loop).
+  reviewedById        String?  @db.Uuid
+  reviewedAt          DateTime?
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app                 App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, date])
+  @@index([tenantId, date])
+  @@index([appId, status])
+}
+
+/// Alarm rule — defines a condition that, when met, produces a
+/// notification. Rules are tenant-scoped + optionally app-scoped.
+/// One default ruleset is created per tenant on first ASO setup
+/// (see packages/aso/src/scoring/alarmEngine.ts > DEFAULT_RULES).
+model AsoAlarm {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  /// Null = global rule (applies to every app). Set = app-specific
+  /// override (typically tighter thresholds for high-priority apps).
+  appId           String?  @db.Uuid
+
+  /// Stable identifier — drives the evaluation engine. See
+  /// alarmEngine.ts `AlarmKind` for the canonical set:
+  ///   KEYWORD_RANK_DROP         — our keyword fell ≥ N positions.
+  ///   KEYWORD_RANK_RISE         — our keyword improved ≥ N positions.
+  ///   COMPETITOR_INTRUSION      — competitor entered our top-10.
+  ///   COMPETITOR_OVERTOOK_US    — competitor's rank passed ours.
+  ///   BUCKET_DEGRADATION        — multiple keywords fell into DECAY.
+  ///   CONVERSION_DROP           — CVR fell ≥ N% versus baseline.
+  ///   RATING_DROP               — app rating fell ≥ N points.
+  ///   REVIEW_SENTIMENT          — wave of low-star reviews detected.
+  ///   NEW_OPPORTUNITY_KEYWORD   — keyword we don't track crossed
+  ///                               popularity threshold.
+  kind            String
+
+  /// User-friendly name shown in settings UI.
+  name            String
+  /// Threshold for the rule — exact shape depends on `kind` (see
+  /// alarmEngine.ts for per-kind interpretation). E.g.
+  ///   { positions: 5 }                 — rank drop ≥5
+  ///   { pctDrop: 10 }                  — CVR drop ≥10%
+  ///   { topNToProtect: 10 }            — competitor enters top-10
+  threshold       Json
+  /// Severity for the resulting notification.
+  severity        String   @default("warning")
+  /// Active rules are evaluated by the daily check; inactive ones
+  /// are kept around for history.
+  enabled         Boolean  @default(true)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app             App?           @relation(fields: [appId], references: [id], onDelete: Cascade)
+  notifications   AsoNotification[]
+
+  @@index([tenantId, enabled])
+  @@index([appId])
+}
+
+/// Notification stream — one row per ALARM TRIGGER per app per day.
+/// Idempotent via @@unique([alarmId, appId, date]) so re-running the
+/// daily check doesn't duplicate notifications. The notification UI
+/// renders these in a bell + drawer; the ASO Analyst AI annotates
+/// them with plain-English interpretations + suggested actions.
+model AsoNotification {
+  id                  String   @id @default(uuid()) @db.Uuid
+  tenantId            String   @db.Uuid
+  /// The rule that fired. Null when the notification originated
+  /// outside the alarm engine (e.g. manual analyst note).
+  alarmId             String?  @db.Uuid
+  /// App the notification is scoped to.
+  appId               String   @db.Uuid
+  /// UTC date the trigger applies to. Used together with alarmId
+  /// for the dedup unique constraint.
+  date                DateTime @db.Date @default(now())
+
+  /// Stable, deterministic per-event key:
+  ///   `${appId}|${date}|${alarmKind}|${trackedKeywordId|competitorId|payloadDigest}`
+  /// Lets the daily-check job upsert without depending on the
+  /// (alarmId, appId, date) constraint — different keyword drops on
+  /// the same day must each create their own notification row.
+  dedupKey            String   @unique
+
+  /// Severity drives the bell badge colour + sort order:
+  ///   info    — informational (new opportunity surfaced).
+  ///   warning — meaningful change (rank fall, CVR slip).
+  ///   danger  — critical (rating crash, competitor took top-3).
+  severity            String   @default("warning")
+  /// Compact headline shown in the bell.
+  title               String
+  /// 1-2 sentence plain-English explanation. May reference numbers
+  /// from the payload.
+  message             String
+  /// Raw payload computed by the alarm engine — exact keyword,
+  /// before/after numbers, competitor app id, etc. JSON so different
+  /// alarm kinds can carry different shapes.
+  payload             Json
+  /// Optional FK to the TrackedKeyword the notification is about —
+  /// lets the UI deep-link to the per-keyword detail page.
+  trackedKeywordId    String?  @db.Uuid
+  /// Optional FK to the Competitor — same reason.
+  competitorId        String?  @db.Uuid
+
+  /// ASO Analyst's pro-level interpretation of WHY this trigger
+  /// matters. Null when analyst hasn't processed this notification yet.
+  agentInterpretation String?
+  /// Analyst's best guess at the upstream cause (recent metadata
+  /// push, competitor move, seasonal drift, etc.).
+  agentProbableCause  String?
+  /// Single concrete next-step the analyst recommends. Starts with a
+  /// verb.
+  agentNextAction     String?
+  /// Analyst's self-reported confidence 0-100. Don't fake precision.
+  agentConfidence     Int?
+
+  readAt              DateTime?
+  /// User who marked it read — for audit. Null = system-marked-read.
+  readById            String?  @db.Uuid
+
+  createdAt           DateTime @default(now())
+
+  tenant              Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  alarm               AsoAlarm?  @relation(fields: [alarmId], references: [id], onDelete: SetNull)
+  app                 App        @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, readAt])
+  @@index([appId, createdAt])
+  @@index([tenantId, severity, readAt])
+}
+
+/// AI relevance score cache. Keyed by (app, keyword, locale) — the
+/// AI relevance scorer is expensive (real-money tokens per call)
+/// and the relevance of "block breaker" to a block-breaker game in
+/// en-US doesn't change every day. After the first analyze populates
+/// this cache, subsequent analyze runs hit it directly until the TTL
+/// expires (default 30 days).
+///
+/// Cost impact: ~80% cache hit rate on apps that re-analyze monthly,
+/// turning a 22 AI-calls-per-analyze workload into 4 — material
+/// savings on Sonnet/Opus tier, marginal on Flash tier.
+model AiRelevanceCache {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  appId       String   @db.Uuid
+  /// Lowercased candidate keyword.
+  keyword     String
+  /// Apple locale code (en-US, fr-FR, etc.).
+  locale      String
+  /// AI's 0–100 relevance score for (app, keyword, locale).
+  relevance   Int
+  /// AI's one-line reason — surfaced in the keyword detail popover.
+  reason      String?
+  /// When the score was first stored. UI shows "scored 5d ago".
+  scoredAt    DateTime @default(now())
+  /// Bumped each time a cache hit is served — useful for auditing
+  /// AI cost savings ("this row served 18 lookups since scoring").
+  hitCount    Int      @default(0)
+
+  app         App      @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, keyword, locale])
+  @@index([tenantId])
+  @@index([appId, scoredAt])
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Build & Ship pipeline (Deploy tab)
+//
+// The runner (apps/runner, macOS) clones an app's git repo, auto-detects
+// the framework, builds the artifact (IPA/AAB/APK) and deploys it to
+// Firebase App Distribution / TestFlight / App Store / Google Play.
+// See /Users/emrepehlevan/.claude/plans/foamy-nibbling-ullman.md
+// ───────────────────────────────────────────────────────────────────────
+
+enum Framework {
+  REACT_NATIVE
+  EXPO
+  FLUTTER
+  IOS_NATIVE
+  ANDROID_NATIVE
+}
+
+enum ArtifactKind {
+  IPA
+  AAB
+  APK
+}
+
+enum DeployTargetKind {
+  FIREBASE_APP_DISTRIBUTION
+  APPLE_TESTFLIGHT
+  APPLE_APP_STORE
+  GOOGLE_PLAY
+}
+
+enum AppConnectionKind {
+  GIT
+  FIREBASE
+  ANDROID_KEYSTORE
+}
+
+enum RunnerStatus {
+  ONLINE
+  OFFLINE
+  DRAINING
+}
+
+enum BuildStatus {
+  QUEUED
+  CLONING
+  DETECTING
+  INSTALLING_DEPS
+  BUILDING
+  SIGNING
+  UPLOADING_ARTIFACT
+  DEPLOYING
+  DONE
+  FAILED
+  CANCELLED
+}
+
+/// Per-app connection to an external service required to build/ship.
+/// GIT (repo + auto-generated deploy key), FIREBASE (service account +
+/// Firebase app ids), ANDROID_KEYSTORE (keystore + passwords + alias).
+/// APPLE / GOOGLE store credentials reuse the tenant-wide `Credential`
+/// rows by reference, so they are NOT modelled here.
+model AppConnection {
+  id                String            @id @default(uuid()) @db.Uuid
+  tenantId          String            @db.Uuid
+  appId             String            @db.Uuid
+  kind              AppConnectionKind
+  /// Reference into the SecretProvider (`<scheme>:///tenants/.../credentials/...`).
+  secretRef         String
+  /// Non-secret per-kind summary: GIT { repoUrl, branch, publicKey }, FIREBASE
+  /// { iosAppId, androidAppId, projectId, testerGroups }, keystore { keyAlias,
+  /// usePlayAppSigning }. Never contains secret material.
+  metadata          Json?
+  lastTestedAt      DateTime?
+  lastTestSucceeded Boolean?
+  lastTestMessage   String?
+  createdById       String            @db.Uuid
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app               App               @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, kind])
+  @@index([tenantId])
+}
+
+/// Per-app build settings the runner reads at build time.
+model AppBuildConfig {
+  id                          String       @id @default(uuid()) @db.Uuid
+  tenantId                    String       @db.Uuid
+  appId                       String       @unique @db.Uuid
+  /// Build source. When `localPath` is set the runner builds the project
+  /// in place on the machine (no clone) — ideal for a self-hosted runner on
+  /// the same Mac as the project. Otherwise it clones the Git connection.
+  localPath                   String?
+  gitRef                      String       @default("main")
+  /// Null = auto-detect from the cloned repo.
+  frameworkOverride           Framework?
+  /// Monorepo: relative path to the mobile project root inside the repo.
+  workdirSubpath              String?
+  iosScheme                   String?
+  iosConfiguration            String       @default("Release")
+  androidModule               String       @default("app")
+  androidBuildType            ArtifactKind @default(AAB)
+  androidKeystoreConnectionId String?      @db.Uuid
+  autoIncrementBuildNumber    Boolean      @default(true)
+  /// User-editable marketing version (e.g. "1.2.0"). Null = read from project.
+  versionName                 String?
+  /// The build number to use for the NEXT deploy. Shown + editable in the
+  /// launcher; bumped by +1 right after each deploy so it's always the next.
+  nextBuildNumber             Int?
+  /// Free-form extra build flags / env (flutter flags, EXTRA_PACKAGER_ARGS…).
+  buildSettings               Json?
+  createdById                 String       @db.Uuid
+  createdAt                   DateTime     @default(now())
+  updatedAt                   DateTime     @updatedAt
+
+  tenant                      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app                         App          @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+/// One build + deploy run — drives the Deploy tab state machine and the
+/// build history. `jobId` is the BullMQ/Job UUID used as the SSE channel.
+model Build {
+  id                 String           @id @default(uuid()) @db.Uuid
+  tenantId           String           @db.Uuid
+  appId              String           @db.Uuid
+  /// The `Job` row id used for live progress streaming (SSE). Plain field,
+  /// not a relation, so a swept Job row never cascades a Build away.
+  jobId              String?          @unique @db.Uuid
+  platform           Platform
+  target             DeployTargetKind
+  frameworkDetected  Framework?
+  status             BuildStatus      @default(QUEUED)
+  gitRef             String
+  gitCommitSha       String?
+  versionString      String?
+  buildNumber        String?
+  artifactKind       ArtifactKind?
+  artifactStorageKey String?
+  artifactSha256     String?
+  /// Artifact size in bytes (mobile artifacts are well under 2 GB → Int).
+  artifactBytes      Int?
+  logsStorageKey     String?
+  /// Target-specific result: Firebase { releaseName, consoleUri }, Play
+  /// { versionCode, track }, Apple { buildId, submissionId }.
+  deployResult       Json?
+  errorSummary       String?
+  failedPhase        BuildStatus?
+  runnerId           String?          @db.Uuid
+  /// The full deploy request config, kept for "re-run".
+  config             Json?
+  queuedAt           DateTime         @default(now())
+  startedAt          DateTime?
+  builtAt            DateTime?
+  uploadedAt         DateTime?
+  deployedAt         DateTime?
+  finishedAt         DateTime?
+  createdById        String           @db.Uuid
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  tenant             Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  app                App              @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, appId])
+  @@index([status])
+}
+
+/// A registered build runner (macOS machine). GLOBAL infra — intentionally
+/// NOT tenant-scoped (it serves every tenant), like TenantMember. Used for
+/// observability ("macOS runner online, Xcode 16.2") and admission control
+/// (refuse an iOS build when no capable runner is ONLINE).
+model Runner {
+  id              String       @id @default(uuid()) @db.Uuid
+  name            String
+  hostname        String
+  os              String       @default("darwin")
+  status          RunnerStatus @default(OFFLINE)
+  /// { ios: bool, android: bool }
+  capabilities    Json
+  /// { xcode, flutter, node, firebaseCli, cocoapods } versions
+  toolchain       Json
+  version         String?
+  registeredAt    DateTime     @default(now())
+  lastHeartbeatAt DateTime     @default(now())
+
+  @@unique([hostname, name])
+  @@index([status])
+}

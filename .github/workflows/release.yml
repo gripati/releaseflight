@@ -1,0 +1,122 @@
+name: Release
+
+# Builds + pushes Docker images on every tag push (v*.*.*). The PR
+# workflow already tests + scans on each PR; this workflow assumes that
+# has passed and the tag was created from a green main.
+
+on:
+  # Auto-on-tag is OFF for now: v* tags are used by the wizard release
+  # (build-wizard.yml), and this verify gate runs the full monorepo
+  # typecheck+unit suite which needs CI services/env not wired in this repo yet.
+  # Build the buyer control-plane images on demand until that CI is set up.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag/version to build (without leading v)"
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+  NODE_VERSION: 22
+  PNPM_VERSION: 9
+
+jobs:
+  # Gate the image build on a green typecheck + unit tests. Even though the PR
+  # workflow runs these on main, a tag can be pushed from any commit — this
+  # ensures we never build/publish an image from code that doesn't typecheck.
+  verify:
+    name: Typecheck & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version from root package.json "packageManager"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm typecheck
+      - run: pnpm test:unit
+
+  build-and-push:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: web
+            dockerfile: apps/web/Dockerfile
+            image: gp-web
+          - app: worker
+            dockerfile: apps/worker/Dockerfile
+            image: gp-worker
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build + push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: true
+          sbom: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:latest
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:${{ steps.version.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.tag }}
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+      - name: Sign image (sigstore/cosign)
+        uses: sigstore/cosign-installer@v3
+      - run: |
+          cosign sign --yes ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+
+      - name: Generate SBOM attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

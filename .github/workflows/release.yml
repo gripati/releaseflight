@@ -5,8 +5,7 @@ name: Release
 # has passed and the tag was created from a green main.
 
 on:
-  # Auto-on-tag is OFF for now: v* tags are used by the wizard release
-  # (build-wizard.yml), and this verify gate runs the full monorepo
+  # Auto-on-tag is OFF for now: this verify gate runs the full monorepo
   # typecheck+unit suite which needs CI services/env not wired in this repo yet.
   # Build the buyer control-plane images on demand until that CI is set up.
   workflow_dispatch:

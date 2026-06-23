@@ -1,0 +1,89 @@
+name: Bug report
+description: Report a reproducible problem in the Release Flight Community Edition.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill in as much as you
+        can — a clear repro is the fastest path to a fix.
+
+        - For **security vulnerabilities**, do **not** open an issue — follow
+          [SECURITY.md](https://github.com/gripati/releaseflight/blob/main/SECURITY.md).
+        - For questions, ideas, or "how do I…?", please use
+          [Discussions](https://github.com/gripati/releaseflight/discussions).
+        - This tracker is for the open Community Edition. For the managed cloud or
+          a commercial license, see [releaseflight.com](https://releaseflight.com).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug, including any error messages.
+      placeholder: When I do X, Y happens instead of Z.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce it? Numbered steps are ideal.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Which release tag or git commit are you running?
+      placeholder: "v1.4.2 or commit b0eb645"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      description: How are you running Release Flight?
+      options:
+        - Self-host (Docker / docker compose)
+        - Local development (pnpm dev)
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Paste any relevant log output (web / worker / runner). This is rendered as
+        code, so no backticks needed. **Please scrub secrets, tokens, and store
+        credentials before pasting.**
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md).
+          required: true

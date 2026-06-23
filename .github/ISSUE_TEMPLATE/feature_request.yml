@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an idea or improvement for the Release Flight Community Edition.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Describing the underlying problem (not just the
+        solution you have in mind) helps us find the best fix.
+
+        For open-ended ideas or discussion, [Discussions](https://github.com/gripati/releaseflight/discussions)
+        is often a better fit than a tracked issue.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are you trying to solve? What's frustrating or missing today?
+      placeholder: I'm always frustrated when...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to happen? Describe the behavior or feature you'd like.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or workarounds you've thought about or tried.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else — mockups, links, related issues, your use case.
+    validations:
+      required: false

@@ -1,0 +1,178 @@
+name: guard
+
+# Open-core boundary guard for the PUBLIC repo.
+# Fails CI if any proprietary code (directories, files, imports) leaks into the
+# public tree, if the @marquee/license stub gets replaced by the real impl, or
+# if a secret is committed. This does NOT build/test anything — that's pr.yml.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  guard:
+    name: Open-core leak guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: No proprietary directories or files
+        run: |
+          set -euo pipefail
+          fail=0
+
+          PROP_DIRS=(
+            "apps/wizard"
+            "apps/site"
+            "apps/license-server"
+            "packages/sealed"
+            "packages/packaging"
+            "apps/worker/sealed"
+            "deploy/coolify"
+            "marketing"
+          )
+          PROP_FILES=(
+            "docker-compose.coolify.yml"
+            "apps/worker/Dockerfile.sealed"
+            ".github/workflows/build-wizard.yml"
+            "docs/DISTRIBUTION_AND_LICENSING_PLAN.md"
+            "docs/RELEASEFLIGHT_GOTOMARKET_PLAN.md"
+            "docs/SUBSCRIPTION_BILLING_PLAN.md"
+          )
+
+          for d in "${PROP_DIRS[@]}"; do
+            if [ -e "$d" ]; then
+              echo "::error::Proprietary directory present on disk: $d (must NOT exist in the public repo)"
+              fail=1
+            fi
+            if git ls-files --error-unmatch "$d/*" >/dev/null 2>&1; then
+              echo "::error::Proprietary directory tracked in git: $d (must NOT exist in the public repo)"
+              fail=1
+            fi
+          done
+
+          for f in "${PROP_FILES[@]}"; do
+            if [ -e "$f" ]; then
+              echo "::error::Proprietary file present on disk: $f (must NOT exist in the public repo)"
+              fail=1
+            fi
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "::error::Proprietary file tracked in git: $f (must NOT exist in the public repo)"
+              fail=1
+            fi
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "Proprietary directory/file leak detected. Remove the items above before merging."
+            exit 1
+          fi
+          echo "OK: no proprietary directories or files present."
+
+      - name: No proprietary imports in source
+        run: |
+          set -euo pipefail
+          fail=0
+
+          PROP_IMPORTS=(
+            "@marquee/sealed"
+            "@marquee/packaging"
+            "@marquee/license-server"
+          )
+
+          # Search the whole working tree, not just apps/ + packages/: a
+          # proprietary import can also land in scripts/, deploy/, infra/, e2e/,
+          # tests/ or a root config file. Exclude vendored / generated trees and
+          # the lockfile (which legitimately lists every workspace package name)
+          # and this guard file itself (it contains the literals on purpose).
+          for imp in "${PROP_IMPORTS[@]}"; do
+            # grep exits 1 (no match) = good; exit 0 (match) = leak.
+            if grep -RInq \
+                 --exclude-dir=node_modules --exclude-dir=.git \
+                 --exclude-dir=dist --exclude-dir=.next --exclude-dir=.turbo \
+                 --exclude=pnpm-lock.yaml --exclude=guard.yml \
+                 -- "$imp" . 2>/dev/null; then
+              echo "::error::Proprietary import found: $imp"
+              grep -RIn \
+                --exclude-dir=node_modules --exclude-dir=.git \
+                --exclude-dir=dist --exclude-dir=.next --exclude-dir=.turbo \
+                --exclude=pnpm-lock.yaml --exclude=guard.yml \
+                -- "$imp" . 2>/dev/null || true
+              fail=1
+            fi
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "Proprietary import leak detected. Remove the imports above before merging."
+            exit 1
+          fi
+          echo "OK: no proprietary imports in source."
+
+      - name: License stub invariant (@marquee/license is COMMUNITY EDITION only)
+        run: |
+          set -euo pipefail
+          fail=0
+
+          SRC="packages/license/src"
+          INDEX="$SRC/index.ts"
+
+          if [ ! -f "$INDEX" ]; then
+            echo "::error::$INDEX is missing — the license stub must exist."
+            fail=1
+          else
+            if ! grep -q "COMMUNITY EDITION" "$INDEX"; then
+              echo "::error::$INDEX is missing the required 'COMMUNITY EDITION' marker (stub was replaced?)."
+              fail=1
+            fi
+          fi
+
+          # Invariant: packages/license/src/ contains ONLY index.ts.
+          # Enforce as an allowlist (not a blocklist of known impl names) so a
+          # proprietary file with ANY name — or nested in a subdirectory — is
+          # caught. We check both the working tree and the git index.
+
+          # 1) Working tree: every regular file under $SRC must be index.ts.
+          if [ -d "$SRC" ]; then
+            while IFS= read -r path; do
+              rel="${path#"$SRC"/}"
+              if [ "$rel" != "index.ts" ]; then
+                echo "::error::Unexpected file under $SRC: $path (only index.ts is allowed in the public stub)."
+                fail=1
+              fi
+            done < <(find "$SRC" -type f)
+          fi
+
+          # 2) Git index: every tracked file under $SRC must be index.ts.
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            rel="${path#"$SRC"/}"
+            if [ "$rel" != "index.ts" ]; then
+              echo "::error::Unexpected file tracked under $SRC: $path (only index.ts is allowed in the public stub)."
+              fail=1
+            fi
+          done < <(git ls-files "$SRC")
+
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "License stub invariant violated. packages/license/src/ must contain ONLY index.ts with the 'COMMUNITY EDITION' marker."
+            exit 1
+          fi
+          echo "OK: license stub invariant holds (COMMUNITY EDITION, only index.ts present)."
+
+      - name: Gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+      - name: Gitleaks (docker fallback)
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo "gitleaks-action did not complete; running gitleaks via docker against .gitleaks.toml."
+          docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:latest \
+            detect --source /repo --config /repo/.gitleaks.toml --redact --no-banner -v

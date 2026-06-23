@@ -1,25 +1,21 @@
-# Release Flight — self-host production stack.
+# Release Flight (Community Edition) — self-host production stack.
 #
-# This is the compose file the Tauri setup wizard writes into the install dir
-# (~/Library/Application Support/Release Flight) and then runs `docker compose up -d`
-# against. That dir already contains the wizard-generated `.env` (0600) and the
-# data/{secrets,storage,license} dirs. Compose auto-loads ./.env for ${VAR}
-# interpolation, and each app service also reads it via env_file.
+# The one-command installer (scripts/install.sh) builds the images, writes a
+# hardened ./.env next to this file, and runs `docker compose up -d` against it.
+# Compose auto-loads ./.env for ${VAR} interpolation; each app service also reads
+# it via env_file. Data persists in ./data/{secrets,storage,license}.
 #
-# Images are referenced by tag (no `build:`). On a buyer's machine they are
-# installed via `docker load` from the bundled per-arch tarballs; on a dev
-# machine they are produced by `apps/web/Dockerfile` (targets `runtime` + `build`)
-# and `apps/worker/Dockerfile` (target `runtime`):
+# Images are referenced by tag (no `build:`); scripts/install.sh produces them:
 #   docker build -f apps/web/Dockerfile    --target runtime -t marquee-web:local     .
 #   docker build -f apps/web/Dockerfile    --target build   -t marquee-migrate:local .
 #   docker build -f apps/worker/Dockerfile --target runtime -t marquee-worker:local  .
 #
-# Distinct project name so volumes never collide with the dev `marquee`/
-# `gamepublisher` stack. Infra (postgres/redis/minio) is NOT published to the
-# host — services reach it on the compose network — so it cannot conflict with
-# any host port. Only `web` publishes 3000 (the wizard's readyz health gate).
+# Infra (postgres/redis/minio) is NOT published to the host — services reach it
+# on the compose network — so it can't conflict with host ports. Only `web`
+# publishes 3000. The project name is dedicated so volumes never collide with a
+# dev stack or any other Compose project.
 
-name: marquee-selfhost
+name: releaseflight
 
 services:
   postgres:
